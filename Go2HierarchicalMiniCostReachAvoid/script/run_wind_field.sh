@@ -1,0 +1,24 @@
+python ./src/rl/EC-EFPPO.py \
+--EXP_NAME=WindField \
+--DIR=wind_field_section_0 \
+--LR=3e-4 \
+--NUM_ENVS=1536 \
+--NUM_STEPS=400 \
+--TOTAL_TIMESTEPS=20_000_000 \
+--SECTION=0 \
+--STEP_SCAN=40 \
+--UPDATE_EPOCHS=10 \
+--NUM_MINIBATCHES=64 \
+--GAMMA_ENERGY=1.0 \
+--GAMMA_REACH_INIT=0.99 \
+--GAMMA_REACH_FINAL=0.99 \
+--GAE_LAMBDA=0.95 \
+--CLIP_EPS=0.2 \
+--ENT_COEF=0.01 \
+--VF_COEF=2.0 \
+--MAX_GRAD_NORM=0.5 \
+--ACTIVATION=tanh \
+--CUDA_USE=2 \
+--ANNEAL_ENT \
+--ANNEAL_LR \
+--NAME=wind_field_section_0_final

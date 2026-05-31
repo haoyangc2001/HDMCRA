@@ -1,0 +1,229 @@
+{
+  "project_name": "HDMCRA",
+  "project_background": "将 Go2HierarchicalReachAvoidRL 中的 Reach-Avoid PPO 算法替换为 Go2HierarchicalMiniCostReachAvoid 中的 EC-EFPPO（Energy-Constrained Earliest Feasible PPO）算法，使 Unitree Go2 四足机器人在复杂环境中安全导航的同时最小化能量消耗。EC-EFPPO 相比 Reach-Avoid PPO 的核心改进在于：引入能量约束机制、三网络独立架构（Policy + Energy Value + Reach Value）、以及 earliest reach index 算法。",
+  "project_goal": "在 /home/tanshan/rep/HDMCRA/HDMCRA 下搭建完全独立的项目，将 Go2HierarchicalReachAvoidRL 中的所有必要组件（IsaacGym、rsl_rl、legged_gym_go2）完整复制进来，确保项目不依赖任何外部仓库。在此基础上，将高层导航算法从 Reach-Avoid PPO 替换为 EC-EFPPO。核心改动集中在环境层（加入 energy 状态）和算法层（三网络 + earliest reach index），底层 IsaacGym 仿真和低层运动策略完全复用。",
+  "steps": [
+    {
+      "step_id": 1,
+      "step_name": "搭建项目骨架与开发环境",
+      "work_content": [
+        "【目录结构】将 Go2HierarchicalReachAvoidRL/legged_gym_go2/ 完整复制到 HDMCRA/legged_gym_go2/",
+        "【目录结构】将 Go2HierarchicalReachAvoidRL/rsl_rl/ 完整复制到 HDMCRA/rsl_rl/",
+        "【目录结构】将 Go2HierarchicalReachAvoidRL/isaacgym/ 完整复制到 HDMCRA/isaacgym/，使项目完全独立，不依赖原始仓库",
+        "【目录结构】修改 legged_gym_go2/setup.py 和 rsl_rl/setup.py 中的包名或版本号，避免与原项目冲突",
+        "【conda 环境】创建 conda 虚拟环境，命名为 hdmcr。Python 版本建议使用 3.8，与 IsaacGym 的原生库兼容（isaacgym/python/setup.py 中要求 python_requires='>=3.6,<3.9'）。需确认 IsaacGym 的 _bindings 目录下存在对应的 gym_38.so",
+        "【PyTorch】安装 PyTorch 和 CUDA 工具包。版本需与 IsaacGym 兼容，参考 isaacgym/python/rlgpu_conda_env.yml 中的 pytorch=1.8.1 + cudatoolkit=11.1。如果使用更新的 PyTorch（如 1.12+），需确认 gymtorch 的 C++ 扩展能正常编译（gymtorch.py 会根据 PyTorch 版本自动设置 TORCH_MAJOR 和 TORCH_MINOR 宏）",
+        "【安装 isaacgym】进入 isaacgym/python/ 目录，执行 pip install -e .。安装过程中会自动编译 gymtorch 的 C++ 扩展（_bindings/src/gymtorch/gymtorch.cpp），需要系统已安装 C++ 编译器和对应版本的 CUDA toolkit。安装完成后执行 python -c 'import isaacgym' 验证",
+        "【安装 rsl_rl】进入 rsl_rl/ 目录，执行 pip install -e .。该包的依赖为 torch>=1.4.0、torchvision>=0.5.0、numpy>=1.16.4，通常已在上一步中满足",
+        "【安装 legged_gym_go2】进入 legged_gym_go2/ 目录，执行 pip install -e .。该包依赖 isaacgym、rsl-rl、matplotlib、numpy==1.20、tensorboard、mujoco==3.2.3、pyyaml。注意 numpy==1.20 是硬性约束，可能需要降级安装。mujoco==3.2.3 用于部署阶段的 MuJoCo 仿真，如果仅做 IsaacGym 训练可以暂缓安装",
+        "【可选依赖】安装 scipy（IsaacGym 的 terrain_utils.py 中用于插值）、opencv-python（可视化脚本可能用到）、wandb（如果需要远程日志）",
+        "【验证】依次执行 import isaacgym、import rsl_rl、import legged_gym，确认无导入错误。然后运行一个简单的 IsaacGym 示例（如 python -c 'from isaacgym import gymapi; g = gymapi.acquire_gym_handle()'）确认 GPU 仿真能正常启动",
+        "【验证】跑通一次原有的 train_reach_avoid.py 训练（短时间），确认环境和算法都正常工作",
+        "【故障排查】如果系统无 NVIDIA GPU 或驱动不兼容，IsaacGym 将无法运行。此时需要确认 nvidia-smi 正常输出、CUDA 版本与 PyTorch 编译版本一致、LD_LIBRARY_PATH 中包含 CUDA 的 lib 路径。如果遇到 gymtorch 编译失败，通常是 PyTorch ABI 不兼容导致的，需要调整 PyTorch 版本或手动设置 TORCH_MAJOR/TORCH_MINOR 编译标志"
+      ],
+      "work_goal": "建立可独立运行的项目结构，创建 conda 虚拟环境，安装所有依赖，并确保能跑通原有的 Reach-Avoid PPO 训练。",
+      "work_focus": "依赖版本的兼容性。IsaacGym 对 Python 版本、PyTorch 版本、CUDA 版本都有隐式要求，且原生库为预编译二进制不可修改。建议严格按照 rlgpu_conda_env.yml 中的版本安装。这一步是后续所有改造的基础。",
+      "expected_outputs": [
+        "HDMCRA/legged_gym_go2/ 目录结构完整",
+        "HDMCRA/rsl_rl/ 目录结构完整",
+        "HDMCRA/isaacgym/ 目录结构完整",
+        "setup.py 包名修改完成",
+        "conda 环境 hdmcr 创建成功",
+        "PyTorch + CUDA 安装成功",
+        "isaacgym / rsl_rl / legged_gym_go2 安装成功，import 无报错",
+        "GPU 仿真示例可正常运行",
+        "train_reach_avoid.py 可正常运行"
+      ],
+      "completed": true,
+      "completed_work": "[2025-05-28] Step 1 完成：\n\n【目录结构】\n- 已将 Go2HierarchicalReachAvoidRL/legged_gym_go2/ 完整复制到 HDMCRA/legged_gym_go2/\n- 已将 Go2HierarchicalReachAvoidRL/rsl_rl/ 完整复制到 HDMCRA/rsl_rl/\n- 已将 Go2HierarchicalReachAvoidRL/isaacgym/ 完整复制到 HDMCRA/isaacgym/\n- setup.py 包名已修改：unitree_rl_gym → hdmcr-unitree-rl-gym (v2.0.0)，rsl_rl → hdmcr-rsl-rl (v2.0.0)\n- legged_gym_go2/setup.py 的 install_requires 已更新为依赖 hdmcr-rsl-rl\n- numpy 版本约束从 ==1.20 放宽为 >=1.20（与 conda 环境中的 1.22.4 兼容）\n- mujoco==3.2.3 暂时移除（仅部署阶段需要，IsaacGym 训练不需要）\n\n【conda 环境】\n- 已创建 conda 环境 hdmcr，Python 3.8\n- PyTorch 1.8.1 + CUDA 11.1 + cuDNN 8.0.5 安装成功\n- 需要降级 MKL 到 2021.4.0 以修复 iJIT_NotifyEvent 符号错误（PyTorch 1.8.1 与新版 MKL 不兼容）\n\n【安装验证】\n- isaacgym 1.0rc4 安装成功（editable mode），import isaacgym 通过\n- hdmcr-rsl-rl 2.0.0 安装成功（editable mode），import rsl_rl 通过\n- hdmcr-unitree-rl-gym 2.0.0 安装成功（editable mode），import legged_gym 通过\n- PyTorch CUDA 可用，GPU 计算测试通过\n- matplotlib 和 tensorboard 已安装\n\n【注意事项】\n- import 顺序必须是 isaacgym 在 torch 之前，否则 CUDA 上下文冲突会导致进程挂起\n- 运行时需要设置 LD_LIBRARY_PATH 包含 conda env 的 lib 目录（libpython3.8.so）\n- 运行时需要设置 DISPLAY=:0（IsaacGym 需要显示服务，即使在 headless 模式）\n- 未验证 train_reach_avoid.py 完整训练流程（需要底层策略 checkpoint 文件）\n"
+    },
+    {
+      "step_id": 2,
+      "step_name": "环境层改造 — 加入 Energy 状态",
+      "work_content": [
+        "在 HighLevelNavigationConfig 类中新增能量相关参数：min_energy、max_energy（初始随机范围）、energy_consumption_scale（消耗缩放系数）。这些参数对应 JAX 版 EnvParams 中的 min_energy=-400、max_energy=800",
+        "在 HighLevelNavigationEnv.__init__ 中新增两个缓冲区：self.energy（当前能量预算，形状 [num_envs]）和 self.energy_consumption（当前步消耗量）",
+        "修改 reset() 方法：在重置环境时，用均匀分布随机初始化每个环境的 energy 值，范围为 [min_energy, max_energy]。这对应 JAX 版所有环境 reset 时的 jax.random.uniform(key, minval=min_energy, maxval=max_energy)",
+        "修改 step() 方法：在每次高层动作执行后计算能量消耗。采用简单方案，即 consumption = ||high_level_actions||² × scale，对应 JAX 版 Pendulum 环境的 |u|² × 8。然后更新 self.energy = clip(self.energy - consumption, min_energy, max_energy)。（精确方案——从底层力矩计算消耗 sum(torques²)——作为后续可选改进，在 Step 8 中实验验证）",
+        "修改观测维度：将 num_high_level_obs 增加 1，用于承载 energy 信息",
+        "修改 _compute_high_level_observations() 方法：在现有观测（heading、velocity、target_dir、lidar）的末尾拼接 self.energy.unsqueeze(1)，形成 [base_features, lidar_features, energy] 的完整观测。这对应 JAX 版所有环境 get_obs() 中末尾拼接 state.energy 的做法",
+        "修改 step() 的返回值，增加 energy 和 energy_consumption，供上层使用",
+        "在 go2_config.py 中的 GO2HighLevelCfg 中同步更新 num_observations（加 1）"
+      ],
+      "work_goal": "在高层导航环境中实现能量预算的初始化、消耗计算和观测拼接，使 EC-EFPPO 所需的 energy 信息能够被训练层获取。",
+      "work_focus": "energy 状态的正确性和一致性。需要确保 energy 在 reset 时随机初始化、在 step 中正确递减、在观测中正确拼接，且不会因数值范围问题影响训练稳定性。建议将 energy 通过 TransformObservation 归一化到 [-1, 1] 范围（除以 400），与 JAX 版的做法一致。",
+      "modified_files": [
+        "legged_gym/envs/go2/high_level_navigation_env.py",
+        "legged_gym/envs/go2/go2_config.py"
+      ],
+      "expected_outputs": [
+        "HighLevelNavigationConfig 新增 energy 相关参数",
+        "HighLevelNavigationEnv 新增 energy 缓冲区",
+        "reset() 方法正确初始化 energy",
+        "step() 方法正确计算能量消耗（简单方案：||actions||² × scale）",
+        "观测维度增加 1（energy），GO2HighLevelCfg.num_observations 同步更新",
+        "观测末尾正确拼接 energy",
+        "step() 返回值包含 energy 和 energy_consumption"
+      ],
+      "completed": true,
+      "completed_work": "[2026-05-28] Step 2 完成：\n\n【完成的工作】\n- HighLevelNavigationConfig 新增 energy 参数: min_energy=-400.0, max_energy=800.0, energy_consumption_scale=8.0\n- HighLevelNavigationEnv.__init__ 新增 energy 缓冲区: self.energy [num_envs], self.energy_consumption [num_envs]\n- reset() 方法修改: 用 uniform_() 随机初始化 energy 到 [min_energy, max_energy], 返回值增加 energy (4-tuple)\n- 新增 update_energy(high_level_actions) 方法: consumption = ||actions||^2 * scale, energy = clip(energy - consumption)\n- _compute_high_level_observations() 修改: 在观测末尾拼接归一化的 energy (energy/400.0)\n- 观测维度增加 1 (self._energy_obs_dim = 1), num_high_level_obs 相应更新\n- 新增 get_energy() 和 get_energy_consumption() 访问方法\n- go2_config.py: GO2HighLevelCfg.env.num_observations 增加 1 (从 40 -> 41)\n- hierarchical_go2_env.py: HierarchicalGO2Env.reset() 适配新的 4-tuple 返回值 (forward-compatible fix)\n\n【遇到的问题】\n- HighLevelNavigationEnv 没有 step() 方法, 能量消耗无法直接在 step() 中计算\n- HierarchicalGO2Env.reset() 原来解包 3 个值, 改为 4-tuple 后会报 ValueError\n\n【解决方案】\n- 新增 update_energy(high_level_actions) 方法封装能量消耗逻辑, 供后续 Step 3 中 HierarchicalGO2Env.step() 调用\n- 同步更新 HierarchicalGO2Env.reset() 解包 4 个值, 避免代码处于不可用状态\n\n【验证】\n- 三个文件语法检查通过 (py_compile)\n- 备份文件已清理\n"
+    },
+    {
+      "step_id": 3,
+      "step_name": "分层环境改造 — 透传 Energy 数据",
+      "work_content": [
+        "修改 HierarchicalGO2Env.reset() 的返回值，在原有的 (high_level_obs, g_values, h_values) 基础上增加 energy",
+        "修改 HierarchicalGO2Env.step() 的返回值，在原有的 (high_level_obs, g_values, h_values, dones, infos) 基础上增加 energy 和 energy_consumption",
+        "注意：本步骤只修改 HierarchicalGO2Env（hierarchical_go2_env.py）。HierarchicalVecEnv（定义在 train_reach_avoid.py 中）的适配放在 Step 7 统一处理"
+      ],
+      "work_goal": "在 HierarchicalGO2Env 中透传 energy 数据，使上层训练脚本能获取到完整的 EC-EFPPO 所需信息。",
+      "work_focus": "数据流的完整性。确保 energy 信息从底层环境一路透传到 HierarchicalGO2Env 的返回值中，不丢失、不错位。同时注意 high_level_action_repeat 场景下能量消耗的累加逻辑——每次低层执行都应贡献能量消耗。",
+      "modified_files": [
+        "legged_gym/envs/go2/hierarchical_go2_env.py"
+      ],
+      "expected_outputs": [
+        "HierarchicalGO2Env.reset() 返回 energy",
+        "HierarchicalGO2Env.step() 返回 energy 和 energy_consumption",
+        "数据流从底层环境到 HierarchicalGO2Env 完整传递"
+      ],
+      "completed": true,
+      "completed_work": "[2026-05-28] Step 3 完成：\n\n【完成的工作】\n- hierarchical_go2_env.py: HierarchicalGO2Env.step() 新增调用 update_energy(high_level_actions) 计算能量消耗\n- hierarchical_go2_env.py: step() 返回值从 5-tuple 扩展为 7-tuple，新增 energy 和 energy_consumption\n- hierarchical_go2_env.py: step() 内部通过 get_energy() 和 get_energy_consumption() 获取能量数据\n- train_reach_avoid.py (forward-compatible fix): HierarchicalVecEnv.reset() 适配 4-tuple 返回值\n- train_reach_avoid.py (forward-compatible fix): HierarchicalVecEnv.step() 适配 7-tuple 返回值\n- train_reach_avoid.py: 训练循环中所有 reset()/step() 调用点均已更新解包模式\n\n【遇到的问题】\n- HierarchicalGO2Env.step() 返回值变更会导致 train_reach_avoid.py 中的 HierarchicalVecEnv 和训练循环解包失败\n- IsaacGym torch_utils.py 的 _device_t 兼容性问题导致完整 import 链无法测试（PyTorch 1.8.1 已知问题）\n\n【解决方案】\n- 同步更新 train_reach_avoid.py 中 HierarchicalVecEnv 和训练循环的解包逻辑，保持代码可运行\n- 完整 import 测试受 IsaacGym/PyTorch 版本兼容性限制，改用 AST 静态分析验证返回值维度一致性\n\n【验证】\n- 三个修改文件语法检查通过 (py_compile)\n- AST 分析确认 HierarchicalGO2Env.step() 返回 7 值, HighLevelNavigationEnv.reset() 返回 4 值\n- train_reach_avoid.py 解包模式与返回值维度匹配\n"
+    },
+    {
+      "step_id": 4,
+      "step_name": "移植 Earliest Reach Index 和三路 GAE",
+      "work_content": [
+        "【明确移植范围】EC-EFPPO 只用到 gae.py 中的 3 个函数，不需要移植全部 10+ 个变体：(1) calculate_indexs3（第 334-378 行）；(2) calculate_gae2 + calculate_advantage2（第 379-432 行）；(3) calculate_gae_reach4（第 195-247 行）。其中 calculate_gae_reach4 已有 PyTorch 版本 _calculate_reach_gae，需要逐行对比验证一致性。",
+        "【移植 calculate_indexs3】源代码位于 gae.py 第 334-378 行。该函数反向扫描轨迹，维护 Vs_row（能量累计值）和 Vhs_row（reach 值），在每个时间步计算 V_total = max(Vs - energy, Vhs)，然后找到使组合价值最小的时间步索引作为 done 标志。JAX 版用 jax.lax.scan 实现反向迭代，PyTorch 版需要用 for 循环或 torch.flip 配合向量化操作实现。关键注意点：(a) done 矩阵的索引赋值 done.at[index, jnp.arange(nh)].set(1.0) 在 PyTorch 中对应 done[index, torch.arange(nh)] = 1.0；(b) 初始 carry 中的 jnp.ones(...) * jnp.inf 值在 PyTorch 中需使用 torch.inf，且需验证 argmin 对 inf 的行为在两个框架中一致；(c) next_mask_1 的 jnp.roll 操作在 PyTorch 中对应 torch.roll",
+        "【移植 calculate_gae2 + calculate_advantage2】源代码位于 gae.py 第 379-432 行。这是带 done mask 的 GAE，用于计算 energy value function 的优势。注意：calculate_advantage2 中使用 done 和 next_done 双重 mask 控制回报传播（delta = (reward + Gamma * next_value * (1 - next_done)) * (1 - done) - value），这与 _calculate_reach_gae 的单 done mask 不同，需要独立实现一个新的 PyTorch 函数（如 calculate_energy_gae），不能复用 _calculate_reach_gae。",
+        "【验证 calculate_gae_reach4 移植正确性】现有的 _calculate_reach_gae 已经从 JAX 版移植，需要逐行对比确认：(a) GAE 系数在 done 边界处的 lam/(1-lam) 重新归一化逻辑完全一致；(b) pre_done_row 的处理——JAX 版在系数更新中同时使用了前一步 done 和当前步 done；(c) Vhs_row 的 DP 更新逻辑（minimum(hs, disc_to_h)）完全对齐。",
+        "【环境 done 合并】JAX 版 calculate_indexs3 产生的 done 只反映 earliest reach index，不包含环境真正终止（如摔倒 base_contact、超时）的信号。在 Go2 环境中 terminate_after_contacts_on=['base'] 会导致环境真正 reset。因此在调用 calculate_indexs3 之后，需要将环境 dones OR 到 done 矩阵中，确保终止状态的回报传播正确：done = done | env_dones。",
+        "【编写验证脚本】用小规模随机数据（如 horizon=10, num_envs=2）分别运行 JAX 版和 PyTorch 版，断言输出数值一致（容差 1e-5）。特别覆盖以下边界情况：(a) 全部 inf 初始值的 argmin 行为；(b) 第一步就 done 的情况；(c) 环境中途终止的情况。"
+      ],
+      "work_goal": "将 JAX 版的核心数学算法移植为 PyTorch 实现，这是整个项目的算法核心。",
+      "work_focus": "算法移植的数值正确性。calculate_indexs3 是最复杂的部分，涉及多维数组的反向迭代和条件索引赋值，需要特别注意 JAX 和 PyTorch 在数组操作语义上的差异（如 jax.lax.scan 的反向模式 vs PyTorch 的 for 循环）。calculate_gae2 需要独立实现（不能复用 _calculate_reach_gae），因为其 done/next_done 双重 mask 逻辑不同。",
+      "new_files": [
+        "rsl_rl/rsl_rl/algorithms/ecfppo_gae.py"
+      ],
+      "expected_outputs": [
+        "calculate_indexs3 PyTorch 版本实现完成",
+        "calculate_gae2 (calculate_energy_gae) PyTorch 版本实现完成，含 done/next_done 双重 mask",
+        "calculate_gae_reach4 移植正确性验证通过（逐行对比 _calculate_reach_gae）",
+        "环境 done 合并逻辑实现完成",
+        "验证脚本通过，PyTorch 版与 JAX 版输出数值一致（含边界情况）"
+      ],
+      "completed": false,
+      "completed_work": ""
+    },
+    {
+      "step_id": 5,
+      "step_name": "实现三网络架构",
+      "work_content": [
+        "新增 EC_EFPPO_ActorCritic(nn.Module) 类，包含三个子网络：self.actor（策略网络，输出高斯分布的均值）、self.energy_critic（能量价值网络，输出标量 V(s)）、self.reach_critic（reach 价值网络，输出标量 h(s)）",
+        "【网络结构决策】每个子网络的结构为 2层×256 MLP，激活函数使用 tanh，与 JAX 版 Policy_Network 和 Value_Network 的默认结构一致。选择 2×256+tanh 而非现有 PyTorch 代码的 4×512+elu，原因：(a) 与 JAX 参考实现对齐，方便 Step 8 中进行交叉验证；(b) JAX 版在简单环境上验证了该结构的有效性；(c) 如果 Go2 环境需要更大容量，可在后续实验中扩展为 4×512",
+        "网络初始化策略与 JAX 版对齐：隐藏层权重使用 orthogonal(sqrt(2))、偏置为 0；actor 最后一层使用 orthogonal(0.01)；critic 最后一层使用 orthogonal(1.0)。可使用已有的 init_weights(sequential, scales) 静态方法",
+        "实现 act(obs) 方法：输入观测，返回 (action, log_prob, energy_value, reach_value)，对应 JAX 版 _env_step 中同时调用 policy、energy network、reach network 的逻辑",
+        "实现 evaluate(obs) 方法：仅前向传播两个 critic，返回 (energy_value, reach_value)，用于计算 bootstrap value",
+        "实现 act_inference(obs) 方法：确定性推理（用均值而非采样），用于部署和评估",
+        "log_std 作为可学习参数，与现有 ActorCritic 的实现方式一致（nn.Parameter）",
+        "三个网络必须完全独立（不共享参数），接口设计要便于后续 EC-EFPPO 中分别计算梯度和分别创建优化器。参考 JAX 版三个独立的 TrainState 的设计思路"
+      ],
+      "work_goal": "扩展现有的 ActorCritic 模块，实现 Policy + Energy Value + Reach Value 三网络架构。",
+      "work_focus": "三网络的独立性和接口一致性。三个网络必须完全独立（不共享参数），但接口设计要便于后续 EC-EFPPO 中分别计算梯度。注意网络结构选择 2×256+tanh 是为了与 JAX 版对齐方便交叉验证，这是一个有意的设计决策。",
+      "modified_files": [
+        "rsl_rl/rsl_rl/modules/actor_critic.py"
+      ],
+      "expected_outputs": [
+        "EC_EFPPO_ActorCritic 类实现完成（2层×256 MLP + tanh）",
+        "act() 方法返回 (action, log_prob, energy_value, reach_value)",
+        "evaluate() 方法返回 (energy_value, reach_value)",
+        "act_inference() 方法返回确定性动作",
+        "网络初始化与 JAX 版一致（orthogonal 初始化）",
+        "三网络参数完全独立，可通过 self.actor / self.energy_critic / self.reach_critic 分别访问"
+      ],
+      "completed": false,
+      "completed_work": ""
+    },
+    {
+      "step_id": 6,
+      "step_name": "实现 EC-EFPPO 算法核心",
+      "work_content": [
+        "实现 EC_EFPPO_Buffer 类：在现有 ReachAvoidBuffer 的基础上扩展，额外存储 energy 序列（每个时间步的剩余能量）和 energy_consumption 序列（每个时间步的消耗量）。g_values 和 h_values 的存储保持不变。还需存储 value_reach 序列（reach critic 的预测值），供 calculate_gae_reach4 使用",
+        "实现 EC_EFPPO_Buffer.compute_advantages(last_values_energy, last_values_reach) 方法，这是算法的核心，内部执行以下流程：(1) 调用 calculate_indexs3 计算 earliest reach index，得到 done 标志；(2) 将环境 dones OR 到 done 矩阵中（合并环境终止信号）；(3) 用 reach 序列和 reach value 序列调用 _calculate_reach_gae（即 calculate_gae_reach4 的 PyTorch 版）得到 reach 优势 advantages_h 和目标 targets_h；(4) 用 energy value 序列和 reward 序列调用 calculate_energy_gae（即 calculate_gae2 的 PyTorch 版）得到 energy 优势 advantages_V 和目标 targets_V；(5) 构造组合信号 g_append = max(reach, -energy) 和 V_total = max(V_reach, V_energy - energy)，调用 _calculate_reach_gae 得到组合优势 advantages_total。这个流程对应 JAX 版 EC-EFPPO.py 第 60-80 行的 _train 函数中的优势计算部分",
+        "实现 EC_EFPPO 类：__init__ 接收 EC_EFPPO_ActorCritic 实例和所有超参数（gamma_energy、gamma_reach_init、gamma_reach_final、clip_eps、vf_coef、entropy_coef 等）。创建三个独立的优化器：self.policy_optimizer = Adam(actor_critic.actor.parameters())、self.energy_optimizer = Adam(actor_critic.energy_critic.parameters())、self.reach_optimizer = Adam(actor_critic.reach_critic.parameters())。这是与 JAX 版三个独立 TrainState 对应的设计——三个网络的梯度完全隔离，互不干扰",
+        "实现 act(obs) 方法：调用 actor_critic.act() 采样动作并记录 value 和 value_reach",
+        "实现 update() 方法：实现多 epoch、多 mini-batch 的三路独立 PPO 更新。每次 mini-batch 更新分三步：(a) 用 advantages_total 计算 policy loss，反向传播到 actor，policy_optimizer.step()；(b) 用 targets_V 计算 energy value loss，反向传播到 energy_critic，energy_optimizer.step()；(c) 用 targets_h 计算 reach value loss，反向传播到 reach_critic，reach_optimizer.step()。三个 loss 分别计算梯度并分别更新，对应 JAX 版 _ecefppo_update 中三个独立的 _loss_fn_policy、_loss_fn_energy、_loss_fn_reach。注意：优势归一化在 _loss_fn_policy 内部进行（gae = (gae - gae.mean()) / (gae.std() + 1e-8)），而非全局归一化",
+        "实现 γ 退火逻辑：在训练循环中根据当前迭代数线性插值 gamma_reach，从 gamma_reach_init 到 gamma_reach_final，对应 JAX 版 EC-EFPPO.py 中 gamma_2 的计算：gamma_2 = min(gamma_reach_final, gamma_reach_init + (gamma_reach_final - gamma_reach_init) * timestep * 2 / total_timesteps)",
+        "实现 entropy 退火逻辑：entropy_coef 从初始值线性衰减到 0，对应 JAX 版 ANNEAL_ENT 开关",
+        "实现梯度裁剪：三个优化器分别执行 clip_grad_norm_(parameters, max_grad_norm)，对应 JAX 版 MAX_GRAD_NORM=0.5"
+      ],
+      "work_goal": "实现完整的 EC-EFPPO 训练器，包括缓冲区、优势计算和三网络独立更新（含三个独立优化器）。",
+      "work_focus": "三路优势计算的正确性和三网络更新的独立性。这是算法的数学核心，需要确保：calculate_indexs3 输出的 done 标志被正确传递到后续的三路 GAE 计算中；三个网络的梯度互不干扰（通过三个独立优化器实现）；Policy 的优势信号来自 combined 优势而非单一的 reach 或 energy 优势。",
+      "new_files": [
+        "rsl_rl/rsl_rl/algorithms/ecfppo.py"
+      ],
+      "expected_outputs": [
+        "EC_EFPPO_Buffer 类实现完成（含 energy、energy_consumption、value_reach 存储）",
+        "compute_advantages() 方法实现完成（含环境 done 合并逻辑）",
+        "EC_EFPPO 类实现完成，含三个独立优化器",
+        "三路独立 PPO 更新实现完成（分别反向传播、分别更新）",
+        "γ 退火逻辑实现完成",
+        "entropy 退火逻辑实现完成",
+        "梯度裁剪对三个网络分别生效"
+      ],
+      "completed": false,
+      "completed_work": ""
+    },
+    {
+      "step_id": 7,
+      "step_name": "改造训练脚本",
+      "work_content": [
+        "修改 HierarchicalVecEnv 类（定义在 train_reach_avoid.py 中），适配 Step 3 中 HierarchicalGO2Env 新增的返回值（energy、energy_consumption）：reset() 返回 (obs, g_vals, h_vals, energy)，step() 返回 (obs, g_vals, h_vals, dones, infos, energy, energy_consumption)",
+        "修改 create_env 函数，从配置中读取 EC-EFPPO 相关参数并传入环境",
+        "重写 train_reach_avoid 函数的核心训练循环：(1) 初始化 EC_EFPPO_ActorCritic 和 EC_EFPPO 实例；(2) rollout 阶段：收集 (obs, g, h, energy, consumption, dones) 到 buffer；(3) 优势计算阶段：调用 buffer.compute_advantages() 执行 earliest reach index + 三路 GAE；(4) 更新阶段：调用 alg.update() 执行三网络独立 PPO 更新；(5) γ 和 entropy 退火：根据当前迭代数更新 gamma_reach 和 entropy_coef",
+        "修改 compute_reach_avoid_success_rate 函数，增加能量消耗统计：计算成功环境的平均能量消耗，用于对比 EC-EFPPO 和基线算法的能效差异",
+        "在 go2_config.py 中新增 GO2EC_EFPPOCfgPPO 配置类，包含 EC-EFPPO 的所有超参数：gamma_energy=1.0、gamma_reach_init=0.999、gamma_reach_final=0.99999、entropy_coef=0.01、vf_coef=0.5、clip_eps=0.2、num_mini_batches=8、gae_lambda=0.95、max_grad_norm=0.5、anneal_ent=False 等，参考 Go2HierarchicalMiniCostReachAvoid/rl/arguments.py 中的默认值",
+        "保留现有的 checkpoint 保存和日志记录逻辑，日志中增加 energy_loss、reach_loss、actor_loss、reach_gamma、entropy_weight 等 EC-EFPPO 特有指标（对应 JAX 版 wandb.log 中记录的指标）"
+      ],
+      "work_goal": "编写适配 EC-EFPPO 的 Go2 训练循环，整合前几步的所有组件。",
+      "work_focus": "训练循环的完整性和日志的可追溯性。确保数据流从环境到 buffer 到算法层的每一步都不丢失，日志能清晰反映三路 loss 的变化趋势和 γ 退火的进度。",
+      "modified_files": [
+        "legged_gym/scripts/train_reach_avoid.py",
+        "legged_gym/envs/go2/go2_config.py"
+      ],
+      "expected_outputs": [
+        "HierarchicalVecEnv 适配新的返回值（含 energy、energy_consumption）",
+        "create_env 函数适配 EC-EFPPO 参数",
+        "train_reach_avoid 核心循环重写完成",
+        "compute_reach_avoid_success_rate 增加能量消耗统计",
+        "GO2EC_EFPPOCfgPPO 配置类新增完成（参数与 JAX 版对齐）",
+        "日志增加 EC-EFPPO 特有指标"
+      ],
+      "completed": false,
+      "completed_work": ""
+    },
+    {
+      "step_id": 8,
+      "step_name": "调试验证与性能对比",
+      "work_content": [
+        "小规模快速验证：用较少的并行环境（如 num_envs=64）和较短的训练轮数，确认三网络 loss 都在下降、energy value 能正确预测能量消耗趋势、reach value 能正确反映离目标的距离、earliest reach index 输出的 done 标志位置合理",
+        "全量训练：使用与基线相同的环境配置（num_envs=4096）进行完整训练，对比 EC-EFPPO 和 Reach-Avoid PPO 在成功率和能量消耗两个维度上的差异",
+        "与 JAX 版交叉验证：在简单环境（如 Pendulum）上同时运行 JAX 版和 PyTorch 版，对比训练曲线是否一致，作为算法移植正确性的最终验证",
+        "参数调优：重点关注 gamma_reach_init/final 的退火范围对训练稳定性的影响、vf_coef 对收敛速度的影响、energy 消耗缩放系数对策略能效的影响",
+        "（可选改进）精确能量方案实验：从底层力矩计算消耗 sum(torques²)，与简单方案 ||actions||² × scale 对比能效差异",
+        "（可选改进）网络容量实验：尝试 4×512+elu 结构，对比 2×256+tanh 在 Go2 环境上的表现差异"
+      ],
+      "work_goal": "在 Go2 环境上完成端到端训练，验证 EC-EFPPO 相比 Reach-Avoid PPO 的优势。",
+      "work_focus": "训练稳定性和算法效果的量化对比。EC-EFPPO 的核心价值在于'在保证到达目标的前提下最小化能量消耗'，需要通过对比实验证明这一点。",
+      "expected_outputs": [
+        "小规模验证通过，三网络 loss 下降",
+        "全量训练完成，成功率和能量消耗数据记录",
+        "与 JAX 版交叉验证通过",
+        "参数调优完成，最优参数确定",
+        "EC-EFPPO 相比 Reach-Avoid PPO 的优势量化证明"
+      ],
+      "completed": false,
+      "completed_work": ""
+    }
+  ]
+}

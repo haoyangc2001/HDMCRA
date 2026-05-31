@@ -1,0 +1,33 @@
+Training Log Analysis Report
+============================
+
+Log File: training
+Total Iterations: 1500
+
+Success Rate Statistics:
+  Initial: 0.014
+  Final: 0.691
+  Maximum: 0.743
+  Minimum: 0.014
+  Average: 0.640
+  Std Dev: 0.105
+
+Execution Cost Statistics:
+  Final: 79.1
+  Average: 80.0
+  Minimum: 50.0
+  Maximum: 118.1
+
+Training Time Statistics:
+  Total: 77296.1 seconds (21.47 hours)
+  Average per iteration: 51.5 seconds
+  Estimated iterations per hour: 69.9
+
+Final Iteration Values:
+  policy_loss: 0.068210
+  value_loss: 896.349660
+  Vmean: -231.380000
+  Rmean: -231.471000
+  Vrmse: 41.553000
+  VexpVar: 0.896000
+  adv_std: 41.553000

@@ -1,0 +1,23 @@
+python ./src/rl/EC-EFPPO.py \
+--EXP_NAME=HalfCheetahAvoid \
+--DIR=halfcheetah_avoid_new_1 \
+--LR=3e-4 \
+--NUM_ENVS=512 \
+--NUM_STEPS=200 \
+--TOTAL_TIMESTEPS=20_000_000 \
+--STEP_SCAN=4 \
+--UPDATE_EPOCHS=10 \
+--NUM_MINIBATCHES=32 \
+--GAMMA_ENERGY=1.0 \
+--GAMMA_REACH_INIT=0.99 \
+--GAMMA_REACH_FINAL=0.99 \
+--GAE_LAMBDA=0.95 \
+--CLIP_EPS=0.2 \
+--ENT_COEF=0.01 \
+--VF_COEF=2.0 \
+--MAX_GRAD_NORM=0.5 \
+--ACTIVATION=tanh \
+--CUDA_USE=0 \
+--ANNEAL_LR \
+--ANNEAL_ENT \
+--NAME=halfcheetah_final
