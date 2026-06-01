@@ -213,9 +213,49 @@ class GO2HighLevelCfgPPO(LeggedRobotCfgPPO):
         resume = False
         resume_path = "/home/caohy/repositories/MCRA_RL/legged_gym_go2/legged_gym/scripts/logs/high_level_go2/20260105-102613/model_1300.pt"  # 你的checkpoint路径
         # 底层策略模型路径
-        low_level_model_path = "/home/tanshan/rep/HDMCRA/Go2HierarchicalReachAvoidRL/logs/rough_go2/Sep08_11-57-26_/model_18500.pt"
+        low_level_model_path = "/home/caohy/repositories/HDMCRA/Go2HierarchicalReachAvoidRL/logs/rough_go2/Sep08_11-57-26_/model_18500.pt"
 
 _base_high_level_obs = 8
 _target_dim = GO2HighLevelCfg.target_lidar_num_bins
 _lidar_dim = GO2HighLevelCfg.lidar_num_bins if GO2HighLevelCfg.enable_manual_lidar else 0
 GO2HighLevelCfg.env.num_observations = _base_high_level_obs + _target_dim + _lidar_dim + 1  # +1 for energy state
+
+
+class GO2EC_EFPPOCfgPPO(GO2HighLevelCfgPPO):
+    """EC-EFPPO 训练配置
+
+    超参数与 JAX 版 Go2HierarchicalMiniCostReachAvoid/rl/arguments.py 对齐。
+    """
+
+    class algorithm(GO2HighLevelCfgPPO.algorithm):
+        # Energy value function 折扣因子（γ_energy = 1.0，无折扣）
+        gamma_energy = 1.0
+        # Reach value function 折扣因子（退火范围）
+        gamma_reach_init = 0.999
+        gamma_reach_final = 0.99999
+        # GAE lambda
+        gae_lambda = 0.95
+        # PPO clip epsilon
+        clip_eps = 0.2
+        # Value function loss coefficient
+        vf_coef = 0.5
+        # Entropy coefficient
+        entropy_coef = 0.01
+        # Whether to anneal entropy coefficient
+        anneal_entropy = False
+        # Max gradient norm
+        max_grad_norm = 0.5
+        # Learning rate
+        learning_rate = 3e-4
+        # Number of learning epochs per update
+        num_learning_epochs = 10
+        # Number of mini-batches
+        num_mini_batches = 8
+
+    class runner(GO2HighLevelCfgPPO.runner):
+        run_name = ''
+        experiment_name = 'ecfppo_go2'
+        max_iterations = 1500
+        save_interval = 100
+        resume = False
+        resume_path = ""

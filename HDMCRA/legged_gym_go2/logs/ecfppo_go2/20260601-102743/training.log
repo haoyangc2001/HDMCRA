@@ -1,0 +1,5 @@
+iter 00001 | success 0.000 | cost 0.0 | energy 0.0 | actor_loss -0.00563 | energy_loss 414.51783 | reach_loss 92103.41484 | entropy 4.2568 | gamma_reach 0.999000 | ent_coef 0.01000 | elapsed 12.93s
+iter 00002 | success 0.000 | cost 0.0 | energy 0.0 | actor_loss -0.02927 | energy_loss 263.66879 | reach_loss 87220.94092 | entropy 4.2568 | gamma_reach 0.999396 | ent_coef 0.01000 | elapsed 14.39s
+iter 00003 | success 0.016 | cost 0.0 | energy 0.0 | actor_loss -0.05643 | energy_loss 383.29071 | reach_loss 86467.51260 | entropy 4.2568 | gamma_reach 0.999792 | ent_coef 0.01000 | elapsed 14.74s
+iter 00004 | success 0.000 | cost 0.0 | energy 0.0 | actor_loss -0.07583 | energy_loss 289.33033 | reach_loss 94831.08887 | entropy 4.2568 | gamma_reach 0.999990 | ent_coef 0.01000 | elapsed 15.46s
+iter 00005 | success 0.000 | cost 0.0 | energy 0.0 | actor_loss -0.08518 | energy_loss 172.73603 | reach_loss 87835.09590 | entropy 4.2568 | gamma_reach 0.999990 | ent_coef 0.01000 | elapsed 15.71s

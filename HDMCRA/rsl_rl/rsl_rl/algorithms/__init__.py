@@ -29,3 +29,4 @@
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
 from .ppo import PPO
+from .ecfppo import EC_EFPPO, EC_EFPPO_Buffer

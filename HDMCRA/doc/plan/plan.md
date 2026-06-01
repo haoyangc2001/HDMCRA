@@ -2,7 +2,7 @@
 
 ## 整体架构
 
-在 `/home/tanshan/rep/HDMCRA/HDMCRA` 下搭建完全独立的项目，将 `Go2HierarchicalReachAvoidRL` 中的所有必要组件（IsaacGym、rsl_rl、legged_gym_go2）完整复制进来，确保项目不依赖任何外部仓库。在此基础上，将高层导航算法从 Reach-Avoid PPO 替换为 `/home/tanshan/rep/HDMCRA/Go2HierarchicalMiniCostReachAvoid`  EC-EFPPO（Energy-Constrained Earliest Feasible PPO）。核心改动集中在环境层（加入 energy 状态）和算法层（三网络 + earliest reach index），底层 IsaacGym 仿真和低层运动策略完全复用。
+在 `/home/caohy/repositories/HDMCRA/HDMCRA` 下搭建完全独立的项目，将 `Go2HierarchicalReachAvoidRL` 中的所有必要组件（IsaacGym、rsl_rl、legged_gym_go2）完整复制进来，确保项目不依赖任何外部仓库。在此基础上，将高层导航算法从 Reach-Avoid PPO 替换为 `/home/caohy/repositories/HDMCRA/Go2HierarchicalMiniCostReachAvoid`  EC-EFPPO（Energy-Constrained Earliest Feasible PPO）。核心改动集中在环境层（加入 energy 状态）和算法层（三网络 + earliest reach index），底层 IsaacGym 仿真和低层运动策略完全复用。
 
 ---
 
@@ -12,20 +12,63 @@
 
 建立可独立运行的项目结构，创建 conda 虚拟环境，安装所有依赖，并确保能跑通原有的 Reach-Avoid PPO 训练。
 
+### 当前状态（2026-05-31 更新）
+
+**已完成（从另一台设备迁移）：**
+- 目录结构已复制：`Go2HierarchicalReachAvoidRL/legged_gym_go2/`、`rsl_rl/`、`isaacgym/` 已完整复制到 `HDMCRA/`
+- `setup.py` 包名已修改：`unitree_rl_gym` → `hdmcr-unitree-rl-gym` (v2.0.0)，`rsl_rl` → `hdmcr-rsl-rl` (v2.0.0)
+- `legged_gym_go2/setup.py` 的 `install_requires` 已更新为依赖 `hdmcr-rsl-rl`
+- `numpy` 版本约束从 `==1.20` 放宽为 `>=1.20`
+
+**待完成（本台设备环境搭建）：**
+- 创建 conda 环境 `hdmcr` (Python 3.8)
+- 安装 PyTorch 1.13.1 + CUDA 11.6（或 PyTorch 2.0.1 + CUDA 11.8）
+- 安装 isaacgym（关键风险：gymtorch 编译）
+- 安装 rsl_rl、legged_gym_go2
+- 验证 import 和 GPU 仿真
+
+### 环境评估（本台设备）
+
+| 项目 | 本台设备 | 原计划要求 | 兼容性 |
+|---|---|---|---|
+| GPU | NVIDIA RTX 4090 (24GB) | NVIDIA GPU | ✅ 兼容 |
+| CUDA | CUDA 12.6 | CUDA 11.1 | ⚠️ 不兼容 |
+| Python | 3.13 (base) / 3.11 (env_isaaclab) | Python 3.8 | ❌ 不兼容 |
+| PyTorch | 2.7.0+cu128 (env_isaaclab) | PyTorch 1.8.1 | ❌ 不兼容 |
+
+**关键问题：**
+1. **CUDA 版本不兼容**：本台设备 CUDA 12.6 与原计划的 CUDA 11.1 不兼容，PyTorch 1.8.1 预编译包是为 CUDA 11.1 构建的
+2. **Python 版本不兼容**：IsaacGym 要求 Python <3.9，但本台设备只有 Python 3.13 和 3.11
+3. **gymtorch 编译风险**：gymtorch C++ 扩展编译可能因 PyTorch 版本不兼容而失败
+
+**解决方案：**
+- 使用 PyTorch 1.13.1 + CUDA 11.6 替代原计划的 PyTorch 1.8.1 + CUDA 11.1
+- 如果 PyTorch 1.13 安装失败，备选方案为 PyTorch 2.0.1 + CUDA 11.8
+- 创建新的 conda 环境，使用 Python 3.8
+
 ### 具体任务
 
-**目录结构：**
-- 将 `Go2HierarchicalReachAvoidRL/legged_gym_go2/` 完整复制到 `HDMCRA/legged_gym_go2/`
-- 将 `Go2HierarchicalReachAvoidRL/rsl_rl/` 完整复制到 `HDMCRA/rsl_rl/`
-- 将 `Go2HierarchicalReachAvoidRL/isaacgym/` 完整复制到 `HDMCRA/isaacgym/`，使项目完全独立，不依赖原始仓库
-- 修改 `legged_gym_go2/setup.py` 和 `rsl_rl/setup.py` 中的包名或版本号，避免与原项目冲突
+**目录结构（已完成）：**
+- ✅ 将 `Go2HierarchicalReachAvoidRL/legged_gym_go2/` 完整复制到 `HDMCRA/legged_gym_go2/`
+- ✅ 将 `Go2HierarchicalReachAvoidRL/rsl_rl/` 完整复制到 `HDMCRA/rsl_rl/`
+- ✅ 将 `Go2HierarchicalReachAvoidRL/isaacgym/` 完整复制到 `HDMCRA/isaacgym/`
+- ✅ 修改 `legged_gym_go2/setup.py` 和 `rsl_rl/setup.py` 中的包名或版本号
 
-**环境与依赖：**
-- 创建 conda 虚拟环境，命名为 `hdmcr`。Python 版本建议使用 3.8，与 IsaacGym 的原生库兼容（`isaacgym/python/setup.py` 中要求 `python_requires=">=3.6,<3.9"`）。需确认 IsaacGym 的 `_bindings` 目录下存在对应的 `gym_38.so`
-- 安装 PyTorch 和 CUDA 工具包。版本需与 IsaacGym 兼容，参考 `isaacgym/python/rlgpu_conda_env.yml` 中的 `pytorch=1.8.1 + cudatoolkit=11.1`。如果使用更新的 PyTorch（如 1.12+），需确认 `gymtorch` 的 C++ 扩展能正常编译（`gymtorch.py` 会根据 PyTorch 版本自动设置 `TORCH_MAJOR` 和 `TORCH_MINOR` 宏）
-- 安装 IsaacGym：进入 `isaacgym/python/` 目录，执行 `pip install -e .`。安装完成后执行 `python -c "import isaacgym"` 验证
+**环境与依赖（待完成）：**
+- 创建 conda 虚拟环境，命名为 `hdmcr`，Python 版本使用 3.8
+- 安装 PyTorch 1.13.1 + CUDA 11.6：
+  ```bash
+  conda install pytorch==1.13.1 torchvision==0.14.1 torchaudio==0.13.1 pytorch-cuda=11.6 -c pytorch -c nvidia -y
+  ```
+- 如果上述安装失败，尝试 PyTorch 2.0.1 + CUDA 11.8：
+  ```bash
+  conda install pytorch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 pytorch-cuda=11.8 -c pytorch -c nvidia -y
+  ```
+- 安装 IsaacGym：进入 `isaacgym/python/` 目录，执行 `pip install -e .`
+  - **关键风险点**：gymtorch C++ 扩展编译（`gymtorch.cpp`）可能因 PyTorch 版本不兼容而失败
+  - 如果编译失败，需要手动修改 `gymtorch.py` 中的 `TORCH_MAJOR`/`TORCH_MINOR` 编译标志
 - 安装 rsl_rl：进入 `rsl_rl/` 目录，执行 `pip install -e .`
-- 安装 legged_gym_go2：进入 `legged_gym_go2/` 目录，执行 `pip install -e .`。注意 `numpy==1.20` 是硬性约束，可能需要降级安装
+- 安装 legged_gym_go2：进入 `legged_gym_go2/` 目录，执行 `pip install -e .`
 - 安装其他可选依赖：`scipy`、`opencv-python`、`wandb`
 
 **验证：**
@@ -33,9 +76,16 @@
 - 运行 IsaacGym 示例确认 GPU 仿真能正常启动
 - 跑通一次原有的 `train_reach_avoid.py` 训练（短时间），确认环境和算法都正常工作
 
+**故障排查：**
+- 如果 gymtorch 编译失败：
+  1. 检查 PyTorch CUDA 版本是否与系统 CUDA 兼容
+  2. 尝试升级/降级 PyTorch 版本
+  3. 手动设置 `TORCH_MAJOR`/`TORCH_MINOR` 编译标志
+  4. 如果所有方案失败，考虑使用 PyTorch 2.0 + CUDA 11.8
+
 ### 工作重心
 
-依赖版本的兼容性。IsaacGym 对 Python 版本、PyTorch 版本、CUDA 版本都有隐式要求，且原生库为预编译二进制不可修改。建议严格按照 `rlgpu_conda_env.yml` 中的版本安装。这一步是后续所有改造的基础。
+PyTorch 版本与 IsaacGym 的兼容性。本台设备 CUDA 12.6 与原计划的 CUDA 11.1 不兼容，需要使用 PyTorch 1.13 + CUDA 11.6 或 PyTorch 2.0 + CUDA 11.8。gymtorch C++ 扩展编译是关键风险点，如果编译失败需要调整 PyTorch 版本或手动修改编译标志。这一步是后续所有改造的基础。
 
 ---
 
