@@ -279,8 +279,8 @@
         "test_energy_in_observation 不再手动调用 _compute_high_level_observations()",
         "新增 test_reset_obs_energy_consistent 测试"
       ],
-      "completed": false,
-      "completed_work": ""
+      "completed": true,
+      "completed_work": "[2026-06-03] Step 10 完成：reset() 观测与能量不同步\n\n【修改的文件】\n1. legged_gym_go2/legged_gym/envs/go2/high_level_navigation_env.py\n   - reset(): 调换执行顺序，先 self.energy.uniform_(min, max) 再 self._compute_high_level_observations()\n   - 确保观测中的 energy 是新采样的值，与 JAX 参考实现一致\n\n2. tests/test_energy_state.py\n   - test_energy_in_observation: 去掉手动再调用 _compute_high_level_observations() 的绕过逻辑，改为直接检查 reset() 返回的 obs\n   - 新增 test_reset_obs_energy_consistent: 验证 reset 返回的 obs 末尾与 energy 一致\n\n【验证结果】\n- test_energy_state.py: 9/9 通过（含新增测试）\n- test_train_ecfppo.py: 11/11 通过\n- test_ecfppo.py: 13/13 通过\n- test_ecfppo_gae.py: 9/9 通过"
     },
     {
       "step_id": 11,

@@ -90,12 +90,12 @@ class HighLevelNavigationEnv:
         # 重置底层环境
         base_obs = self.base_env.reset()
 
-        # 计算高层观测
-        self._compute_high_level_observations()
-
-        # Initialize energy with uniform random in [min_energy, max_energy]
+        # 先采样 energy（与 JAX 参考一致：先采样 init_energy，再拼入 observation）
         self.energy.uniform_(self.min_energy, self.max_energy)
         self.energy_consumption.zero_()
+
+        # 再算高层观测（此时 energy 是新值，会正确拼入 obs 末尾）
+        self._compute_high_level_observations()
 
         # Compute initial g/h values
         initial_avoid_metric, initial_reach_metric = self._get_current_metrics()

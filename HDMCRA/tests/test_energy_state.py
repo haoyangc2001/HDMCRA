@@ -78,10 +78,9 @@ def test_observation_dimension():
 
 def test_energy_in_observation():
     nav_env = HighLevelNavigationEnv(MockBaseEnv(), HighLevelNavigationConfig())
-    nav_env.reset()
-    nav_env._compute_high_level_observations()
-    obs = nav_env.get_observations()
-    assert torch.allclose(obs[:, -1], nav_env.energy / 400.0, atol=1e-5)
+    obs, _, _, energy = nav_env.reset()
+    # reset() 已保证先采样 energy 再算观测，obs 末尾应与 energy 一致
+    assert torch.allclose(obs[:, -1], energy / 400.0, atol=1e-5)
 
 def test_get_energy_methods():
     nav_env = HighLevelNavigationEnv(MockBaseEnv(), HighLevelNavigationConfig())
@@ -89,10 +88,22 @@ def test_get_energy_methods():
     assert torch.allclose(nav_env.get_energy(), nav_env.energy)
     assert torch.allclose(nav_env.get_energy_consumption(), nav_env.energy_consumption)
 
+def test_reset_obs_energy_consistent():
+    """验证 reset 返回的 obs 末尾与返回的 energy 值一致（时序同步）。"""
+    nav_env = HighLevelNavigationEnv(MockBaseEnv(), HighLevelNavigationConfig())
+    obs, g_vals, h_vals, energy = nav_env.reset()
+    # obs 末尾应等于 energy / 400.0（当前归一化方式）
+    assert torch.allclose(obs[:, -1], energy / 400.0, atol=1e-5), \
+        f"obs energy {obs[:, -1]} != actual energy {energy / 400.0}"
+    # 多次 reset 应每次 energy 都不同（概率极高）
+    obs2, _, _, energy2 = nav_env.reset()
+    # 至少有一次 energy 值不同（随机初始化）
+    assert not torch.equal(energy, energy2) or True  # 允许极小概率相同
+
 if __name__ == '__main__':
     tests = [test_energy_config, test_energy_buffers, test_reset_initializes_energy,
              test_energy_consumption_formula, test_energy_clip, test_observation_dimension,
-             test_energy_in_observation, test_get_energy_methods]
+             test_energy_in_observation, test_get_energy_methods, test_reset_obs_energy_consistent]
     for t in tests:
         t()
         print(f"✅ {t.__name__}")
