@@ -301,8 +301,8 @@
         "update_energy() 先 clip 再算能耗",
         "新增 test_energy_clip_action 测试"
       ],
-      "completed": false,
-      "completed_work": ""
+      "completed": true,
+      "completed_work": "[2026-06-03] Step 11 完成：能耗按未裁剪动作计算\n\n【修改的文件】\n1. legged_gym_go2/legged_gym/envs/go2/high_level_navigation_env.py\n   - update_energy(): 增加 torch.clip(high_level_actions, -1.0, 1.0) 后再计算能耗\n   - 确保能耗惩罚与实际执行的动作对齐，策略不会为被截断的动作承担额外惩罚\n\n2. tests/test_energy_state.py\n   - test_energy_clip: 更新为使用 nav_env.energy.fill_(-390.0) 使消耗后低于 min_energy\n   - 新增 test_energy_clip_action: 验证 [2,0,0] 被 clip 为 [1,0,0]，消耗为 8.0 而非 32.0\n\n【验证结果】\n- test_energy_state.py: 10/10 通过（含新增测试）\n- test_train_ecfppo.py: 11/11 通过\n- test_ecfppo.py: 13/13 通过"
     },
     {
       "step_id": 12,

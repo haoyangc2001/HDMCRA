@@ -124,14 +124,16 @@ class HighLevelNavigationEnv:
         """
         计算能量消耗并更新能量预算。
 
-        采用简单方案: consumption = ||high_level_actions||^2 * scale
+        采用简单方案: consumption = ||clipped_actions||^2 * scale
         对应 JAX 版 Pendulum 环境的 |u|^2 * 8
 
         Args:
-            high_level_actions: [num_envs, 3] raw high-level actions (before clipping/scaling)
+            high_level_actions: [num_envs, 3] raw high-level actions
         """
-        # 计算能量消耗: ||actions||^2 * scale
-        consumption = torch.sum(high_level_actions ** 2, dim=1) * self.energy_consumption_scale
+        # 先 clip 到 [-1, 1]，与 update_velocity_commands() 的实际执行动作一致
+        clipped_actions = torch.clip(high_level_actions, -1.0, 1.0)
+        # 计算能量消耗: ||clipped_actions||^2 * scale
+        consumption = torch.sum(clipped_actions ** 2, dim=1) * self.energy_consumption_scale
         self.energy_consumption = consumption.clone()
 
         # 更新能量预算: energy = clip(energy - consumption, min_energy, max_energy)

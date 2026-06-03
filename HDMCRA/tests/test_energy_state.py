@@ -69,7 +69,11 @@ def test_energy_consumption_formula():
 def test_energy_clip():
     nav_env = HighLevelNavigationEnv(MockBaseEnv(), HighLevelNavigationConfig())
     nav_env.reset()
-    nav_env.update_energy(torch.ones(4, 3) * 100)
+    # 动作会被 clip 到 [-1,1]，所以 ones*100 等效于 ones*1
+    # 消耗 = ||[1,1,1]||^2 * 8 = 24
+    # 设 energy 为接近下限的值，使消耗后低于 min_energy
+    nav_env.energy.fill_(-390.0)  # -390 - 24 = -414 < -400
+    nav_env.update_energy(torch.ones(4, 3) * 100)  # clip 后等效于 ones*1
     assert torch.all(nav_env.energy == -400.0)
 
 def test_observation_dimension():
@@ -100,10 +104,21 @@ def test_reset_obs_energy_consistent():
     # 至少有一次 energy 值不同（随机初始化）
     assert not torch.equal(energy, energy2) or True  # 允许极小概率相同
 
+def test_energy_clip_action():
+    """超出 [-1,1] 的动作应被 clip 后再算能耗。"""
+    nav_env = HighLevelNavigationEnv(MockBaseEnv(), HighLevelNavigationConfig())
+    nav_env.reset()
+    # [2, 0, 0] 应被 clip 为 [1, 0, 0]，消耗 = 1^2 * 8 = 8.0，而非 2^2 * 8 = 32.0
+    actions = torch.tensor([[2., 0., 0.]])
+    nav_env.update_energy(actions)
+    assert abs(nav_env.energy_consumption[0].item() - 8.0) < 1e-5, \
+        f"expected 8.0, got {nav_env.energy_consumption[0].item()}"
+
 if __name__ == '__main__':
     tests = [test_energy_config, test_energy_buffers, test_reset_initializes_energy,
              test_energy_consumption_formula, test_energy_clip, test_observation_dimension,
-             test_energy_in_observation, test_get_energy_methods, test_reset_obs_energy_consistent]
+             test_energy_in_observation, test_get_energy_methods, test_reset_obs_energy_consistent,
+             test_energy_clip_action]
     for t in tests:
         t()
         print(f"✅ {t.__name__}")
