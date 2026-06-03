@@ -1,0 +1,242 @@
+{
+  "debug_records": [
+    {
+      "plan_id": "1",
+      "plan_name": "对齐基线超参数",
+      "date": "2026-06-01",
+      "background": "首次全量训练（1500 轮）成功率仅 2.4%，而基线 Reach-Avoid PPO 在同样环境下达到 69-72%。经分析，根因不在轮数不足，而在算法信号链。",
+      "changes": [
+        {
+          "file": "actor_critic.py",
+          "item": "EC_EFPPO_ActorCritic activation 参数",
+          "old_value": "硬编码 nn.Tanh",
+          "new_value": "接受字符串参数，默认 elu",
+          "reason": "对齐基线，防止深层 tanh 梯度消失"
+        },
+        {
+          "file": "go2_config.py",
+          "item": "network.hidden_dim",
+          "old_value": "256（硬编码）",
+          "new_value": "512",
+          "reason": "对齐基线 4×512 网络容量"
+        },
+        {
+          "file": "go2_config.py",
+          "item": "network.num_hidden_layers",
+          "old_value": "2（硬编码）",
+          "new_value": "4",
+          "reason": "对齐基线 4 层 MLP"
+        },
+        {
+          "file": "go2_config.py",
+          "item": "network.activation",
+          "old_value": "tanh（硬编码）",
+          "new_value": "elu",
+          "reason": "对齐基线激活函数"
+        },
+        {
+          "file": "go2_config.py",
+          "item": "algorithm.learning_rate",
+          "old_value": "3e-4",
+          "new_value": "1e-3",
+          "reason": "对齐基线学习率"
+        },
+        {
+          "file": "go2_config.py",
+          "item": "algorithm.vf_coef",
+          "old_value": "0.5",
+          "new_value": "1.0",
+          "reason": "对齐基线 value loss 系数"
+        },
+        {
+          "file": "go2_config.py",
+          "item": "runner.resume",
+          "old_value": "True",
+          "new_value": "False",
+          "reason": "新实验不从旧 checkpoint 恢复"
+        },
+        {
+          "file": "train_ecfppo.py",
+          "item": "网络参数读取方式",
+          "old_value": "硬编码",
+          "new_value": "从 train_cfg.network 读取",
+          "reason": "配置化管理"
+        }
+      ],
+      "baseline_comparison": {
+        "iterations": [50, 100, 500, 1000, 1500],
+        "baseline_success_rate": [52.2, 53.1, 61.9, 72.1, 69.1],
+        "ecfppo_before": [0.8, 0.6, 1.3, 1.9, 2.4]
+      },
+      "diagnosis": "EC-EFPPO 的三路 GAE + earliest reach index 组合产生了不正确的梯度信号，actor 主要被 reach 信号驱动，energy 优势量级（数百~数千）远大于 reach 优势（~60），导致组合优势被 energy 淹没。Plan A 先对齐网络容量和学习率，验证是否为瓶颈。",
+      "result": {
+        "experiment_id": "20260601-235003",
+        "metrics": {
+          "old_version": {"peak_success_rate": 5.4, "final_success_rate": 2.4},
+          "plan_a": {"peak_success_rate": 40.8, "final_success_rate": 18.4},
+          "baseline_ppo": {"peak_success_rate": 74.3, "final_success_rate": 69.1}
+        },
+        "finding": "Plan A 有效（Peak 5.4%→40.8%），但训练曲线异常：中间阶段（iter 700-1300）成功率反而下降到 3%，最后 200 轮突然跳升到 18%。追踪发现 energy critic 在约 50 轮内崩溃：energy_loss 从 375 爆炸到 10^11 级，然后坍缩到 ≈0 并永不恢复。"
+      }
+    },
+    {
+      "plan_id": "2",
+      "plan_name": "修复 γ_energy",
+      "date": "2026-06-02",
+      "background": "Plan 1 验证了网络容量是瓶颈之一（Peak 5.4%→40.8%），但 energy critic 在 50 轮内崩溃（energy_loss 爆炸到 10^11 后坍缩到 ≈0），导致策略失去能量优化能力。",
+      "root_cause": "γ_energy=1.0（无折扣）使 energy value targets 等于 200 步无折扣累积能量消耗。Go2 环境每步能量消耗 ≈4~24（3 维动作 × scale 8.0），200 步累积达 800~4800，MSE loss 量级达 10^7，梯度爆炸导致 energy critic 网络崩溃。对比 JAX 参考实现的 Pendulum 环境：动作 1 维、有阈值门控（|u| > 0.1 才计消耗），每步能量 0~8，200 步累积 0~1600，量级可控。",
+      "changes": [
+        {
+          "file": "go2_config.py",
+          "item": "algorithm.gamma_energy",
+          "old_value": "1.0",
+          "new_value": "0.99",
+          "reason": "使 energy targets 从 ~4000 降到 ~200，critic 可稳定学习"
+        }
+      ],
+      "result": {
+        "experiment_id": "20260602-200425",
+        "metrics": {
+          "old_version": {"peak_success_rate": 5.4, "final_success_rate": 2.4},
+          "plan_a": {"peak_success_rate": 40.8, "final_success_rate": 18.4},
+          "plan_b1": {"peak_success_rate": 57.3, "final_success_rate": 3.0},
+          "baseline_ppo": {"peak_success_rate": 74.3, "final_success_rate": 69.1}
+        },
+        "energy_loss_status": {
+          "old_version": "崩溃到 ≈0",
+          "plan_a": "崩溃到 ≈0",
+          "plan_b1": "爆炸后恢复到 200~300"
+        },
+        "key_findings": [
+          "γ_energy=0.99 解决了 energy critic 崩溃问题：energy_loss 仍会在初期膨胀（到 10^12），但约 200 轮后恢复到 200~300 的合理范围",
+          "Peak 成功率进一步提升到 57.3%（Plan A 为 40.8%），证明 energy critic 恢复后能提供有效的能量优化信号",
+          "但 Final 成功率仅 3.0%，训练仍然极不稳定（成功率在 2%~57% 之间剧烈波动）",
+          "与基线 PPO 的稳步上升（50 轮即达 52%）形成鲜明对比，说明三路 GAE + earliest reach index 的信号传导机制本身存在不稳定性"
+        ]
+      },
+      "four_round_summary": {
+        "iterations": ["1-100", "101-300", "301-500", "501-700", "701-900", "901-1100", "1101-1300", "1301-1500"],
+        "old_version": [0.9, 0.9, 1.3, 0.9, 1.8, 2.6, 2.6, 2.6],
+        "plan_a": [3.7, 4.4, 4.8, 7.7, 4.8, 4.0, 2.9, 17.7],
+        "plan_b1": [3.5, 3.5, 4.0, 3.2, 2.8, 2.8, 3.6, 2.8],
+        "baseline_ppo": [39.6, 53.6, 57.9, 65.7, 71.2, 72.0, 70.6, 69.5]
+      }
+    },
+    {
+      "plan_id": "3",
+      "plan_name": "修复实现正确性 Bug（6 项）",
+      "date": "2026-06-03",
+      "background": "Plan 1 和 Plan 2 的训练数据显示 EC-EFPPO 效果不佳，但深入代码审查发现，部分问题源于实现层面的正确性 Bug，而非算法本身。对比两个参考仓库（JAX 版 Go2HierarchicalMiniCostReachAvoid 和 PyTorch 基线 Go2HierarchicalReachAvoidRL），发现 5 个致命 Bug 和多个设计偏差，导致 success rate 统计无效、训练信号错误、能耗物理不一致。",
+      "bugs_fixed": [
+        {
+          "bug_id": "B1",
+          "severity": "P0",
+          "title": "success rate 传入了错误的变量",
+          "location": "train_ecfppo.py:279",
+          "description": "compute_reach_avoid_success_rate() 的 h_sequence 参数传入了 alg.buffer.energy[1:]，而非安全约束序列 h_values。所有 success_rate、exec_cost、avg_energy 统计值全部无效。",
+          "fix": "buffer 增加 h_values 存储，add() 接口增加 h_values/next_h 参数，rollout 循环写入 h，success rate 调用改为 alg.buffer.h_values[1:]"
+        },
+        {
+          "bug_id": "B2",
+          "severity": "P0",
+          "title": "buffer 没存 h_values",
+          "location": "ecfppo.py:79",
+          "description": "EC_EFPPO_Buffer 只存了 g_values、energy、dones，没有 h_values 字段。即使修了 B1 的传参，buffer 里也没有 h 数据可用。",
+          "fix": "buffer 增加 self.h_values 存储 [T+1, N]，add() 接口增加 h_values 和 next_h 参数"
+        },
+        {
+          "bug_id": "B3",
+          "severity": "P0",
+          "title": "reset() 观测与能量不同步",
+          "location": "high_level_navigation_env.py:93-105",
+          "description": "reset() 先算观测再采样 energy，导致第一个 timestep 的 obs 里 energy 是旧值。JAX 参考实现是先采样 energy 再拼入观测。",
+          "fix": "调换执行顺序：先 self.energy.uniform_(min, max) 再 self._compute_high_level_observations()"
+        },
+        {
+          "bug_id": "B4",
+          "severity": "P1",
+          "title": "能耗按未裁剪动作计算",
+          "location": "high_level_navigation_env.py:115,123",
+          "description": "update_energy() 用原始未裁剪的 high_level_actions 计算能耗，但 update_velocity_commands() 先 clip 到 [-1,1] 再执行。策略在被截断执行的同时承担更大的能耗惩罚。",
+          "fix": "update_energy() 增加 torch.clip(high_level_actions, -1.0, 1.0) 后再计算能耗"
+        },
+        {
+          "bug_id": "B5",
+          "severity": "P1",
+          "title": "action_repeat 下能耗累计缺失",
+          "location": "hierarchical_go2_env.py:140",
+          "description": "high_level_action_repeat=5 时，update_energy() 只在低层循环外调用一次，系统性低估总能耗为实际的 1/5。",
+          "fix": "update_energy() 增加 repeat 参数，step() 传入 repeat=self.low_level_action_repeat"
+        },
+        {
+          "bug_id": "B6",
+          "severity": "P2",
+          "title": "energy 归一化方案错误",
+          "location": "high_level_navigation_env.py:261",
+          "description": "energy/400.0 归一化范围是 [-1, 2]（min=-400→-1, max=800→2），不是声称的 [-1,1]。且 JAX 参考实现直接拼原始 energy，不做归一化。",
+          "fix": "去掉归一化，改为 self.high_level_obs_buf[:, -1] = self.energy，与 JAX 参考一致"
+        }
+      ],
+      "test_fixes": [
+        {
+          "file": "test_train_ecfppo.py",
+          "changes": [
+            "test_config_class: 断言修正为 gamma_energy==0.99, vf_coef==1.0, learning_rate==1e-3",
+            "test_alg_with_config: 断言修正为 gamma_energy==0.99, value_loss_coef==1.0",
+            "test_mini_training_loop: 增加 h_values/next_h 参数",
+            "新增 test_buffer_stores_h_values: 验证 h_values 形状 [horizon+1, num_envs]",
+            "新增 test_success_rate_uses_h_values: 验证 h >= 0 的环境被正确判为不安全"
+          ]
+        },
+        {
+          "file": "test_energy_state.py",
+          "changes": [
+            "test_energy_in_observation: 去掉手动再调用 _compute_high_level_observations() 的绕过逻辑，改为检查 reset() 返回的 obs",
+            "test_energy_clip: 更新为使用 energy.fill_(-390.0) 触发下限 clip",
+            "新增 test_reset_obs_energy_consistent: 验证 reset 返回的 obs 末尾与 energy 一致",
+            "新增 test_energy_clip_action: 验证超范围动作被 clip 后再算能耗"
+          ]
+        },
+        {
+          "file": "test_ecfppo.py",
+          "changes": [
+            "fill_buffer_randomly: 所有 buffer.add() 增加 h_values/next_h 参数",
+            "test_buffer_add: 增加 h_values/next_h 参数",
+            "test_buffer_instantiation: 增加 h_values 形状断言",
+            "test_ecefppo_update: 增加 h_values/next_h 参数",
+            "test_independent_gradient_flow: 增加 h_values/next_h 参数",
+            "test_incomplete_rollout_error: 增加 h_values/next_h 参数"
+          ]
+        }
+      ],
+      "files_modified": [
+        "rsl_rl/rsl_rl/algorithms/ecfppo.py",
+        "legged_gym_go2/legged_gym/scripts/train_ecfppo.py",
+        "legged_gym_go2/legged_gym/envs/go2/high_level_navigation_env.py",
+        "legged_gym_go2/legged_gym/envs/go2/hierarchical_go2_env.py",
+        "tests/test_train_ecfppo.py",
+        "tests/test_energy_state.py",
+        "tests/test_ecfppo.py"
+      ],
+      "test_results": {
+        "test_ecfppo_gae.py": "9/9 passed",
+        "test_ecfppo.py": "13/13 passed",
+        "test_energy_state.py": "10/10 passed",
+        "test_train_ecfppo.py": "11/11 passed",
+        "test_ecfppo_actor_critic.py": "11/12 passed (1 pre-existing architecture mismatch)"
+      },
+      "result": {
+        "status": "代码层面修复完成，待全量训练验证",
+        "key_findings": [
+          "修复前所有 success_rate、exec_cost、avg_energy 统计值全部无效（Bug B1+B2）",
+          "修复前每个 episode 第一步的训练信号包含错误的 energy 值（Bug B3）",
+          "修复前能耗惩罚与实际执行动作不一致，策略被错误惩罚（Bug B4）",
+          "修复前 action_repeat=5 时能耗被低估 5 倍（Bug B5）",
+          "修复前 observation 中 energy 的归一化范围与文档和参考实现均不一致（Bug B6）",
+          "修复前测试断言旧配置值，掩盖了真实 Bug（测试问题）",
+          "Plan 1 和 Plan 2 的训练数据因 Bug B1-B5 存在，成功率和能耗统计不可直接使用"
+        ]
+      }
+    }
+  ]
+}

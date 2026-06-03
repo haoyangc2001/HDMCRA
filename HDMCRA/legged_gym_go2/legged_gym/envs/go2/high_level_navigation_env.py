@@ -120,20 +120,21 @@ class HighLevelNavigationEnv:
         self.base_env.commands[:, 1] = velocity_commands[:, 1] * 0.2 # vy
         self.base_env.commands[:, 2] = velocity_commands[:, 2] * 0.8# vyaw
 
-    def update_energy(self, high_level_actions):
+    def update_energy(self, high_level_actions, repeat=1):
         """
         计算能量消耗并更新能量预算。
 
-        采用简单方案: consumption = ||clipped_actions||^2 * scale
+        采用简单方案: consumption = ||clipped_actions||^2 * scale * repeat
         对应 JAX 版 Pendulum 环境的 |u|^2 * 8
 
         Args:
             high_level_actions: [num_envs, 3] raw high-level actions
+            repeat: int, 高层动作驱动的低层执行次数，每次低层执行都贡献能耗
         """
         # 先 clip 到 [-1, 1]，与 update_velocity_commands() 的实际执行动作一致
         clipped_actions = torch.clip(high_level_actions, -1.0, 1.0)
-        # 计算能量消耗: ||clipped_actions||^2 * scale
-        consumption = torch.sum(clipped_actions ** 2, dim=1) * self.energy_consumption_scale
+        # 计算能量消耗: ||clipped_actions||^2 * scale * repeat
+        consumption = torch.sum(clipped_actions ** 2, dim=1) * self.energy_consumption_scale * repeat
         self.energy_consumption = consumption.clone()
 
         # 更新能量预算: energy = clip(energy - consumption, min_energy, max_energy)
@@ -260,10 +261,8 @@ class HighLevelNavigationEnv:
             lidar_start = target_start + (self.target_lidar_num_bins if self.target_lidar_num_bins > 0 else 0)
             self.high_level_obs_buf[:, lidar_start:lidar_start + self.lidar_num_bins] = lidar_buf
 
-        # Append normalized energy to the end of observations
-        # 归一化到 [-1, 1] 范围（除以 400），与 JAX 版做法一致
-        energy_normalized = self.energy / 400.0
-        self.high_level_obs_buf[:, -1] = energy_normalized
+        # Append raw energy to the end of observations（与 JAX 参考一致，不做归一化）
+        self.high_level_obs_buf[:, -1] = self.energy
 
     def _compute_g_function(self, reach_metric):
         """

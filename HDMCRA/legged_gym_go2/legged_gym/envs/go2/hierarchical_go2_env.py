@@ -138,7 +138,8 @@ class HierarchicalGO2Env:
             energy_consumption: [num_envs] energy consumed in this step
         """
         # 1. Compute energy consumption for this high-level action
-        self.high_level_env.update_energy(high_level_actions)
+        #    每次低层执行都贡献能耗，按 low_level_action_repeat 累计
+        self.high_level_env.update_energy(high_level_actions, repeat=self.low_level_action_repeat)
 
         # 2. Update desired velocity commands
         self.high_level_env.update_velocity_commands(high_level_actions)
