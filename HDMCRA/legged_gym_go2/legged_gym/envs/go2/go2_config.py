@@ -224,12 +224,20 @@ GO2HighLevelCfg.env.num_observations = _base_high_level_obs + _target_dim + _lid
 class GO2EC_EFPPOCfgPPO(GO2HighLevelCfgPPO):
     """EC-EFPPO 训练配置
 
-    超参数与 JAX 版 Go2HierarchicalMiniCostReachAvoid/rl/arguments.py 对齐。
+    基础超参数与 JAX 版 Go2HierarchicalMiniCostReachAvoid/rl/arguments.py 对齐。
+    2026-06-01 Plan A：对齐基线 Reach-Avoid PPO 的网络容量和学习率，
+    解决 EC-EFPPO 成功率过低（2.4% vs 基线 69%）的问题。
     """
+
+    class network:
+        # Plan A: 对齐基线 4×512+elu（原: 2×256+tanh）
+        hidden_dim = 512
+        num_hidden_layers = 4
+        activation = 'elu'
 
     class algorithm(GO2HighLevelCfgPPO.algorithm):
         # Energy value function 折扣因子（γ_energy = 1.0，无折扣）
-        gamma_energy = 1.0
+        gamma_energy = 0.99
         # Reach value function 折扣因子（退火范围）
         gamma_reach_init = 0.999
         gamma_reach_final = 0.99999
@@ -237,16 +245,16 @@ class GO2EC_EFPPOCfgPPO(GO2HighLevelCfgPPO):
         gae_lambda = 0.95
         # PPO clip epsilon
         clip_eps = 0.2
-        # Value function loss coefficient
-        vf_coef = 0.5
+        # Value function loss coefficient — Plan A: 0.5 → 1.0（对齐基线）
+        vf_coef = 1.0
         # Entropy coefficient
         entropy_coef = 0.01
         # Whether to anneal entropy coefficient
         anneal_entropy = False
         # Max gradient norm
         max_grad_norm = 0.5
-        # Learning rate
-        learning_rate = 3e-4
+        # Learning rate — Plan A: 3e-4 → 1e-3（对齐基线）
+        learning_rate = 1e-3
         # Number of learning epochs per update
         num_learning_epochs = 10
         # Number of mini-batches
@@ -258,4 +266,4 @@ class GO2EC_EFPPOCfgPPO(GO2HighLevelCfgPPO):
         max_iterations = 1500
         save_interval = 100
         resume = False
-        resume_path = ""
+        resume_path = None

@@ -258,25 +258,29 @@ conda run -n hdmcr env LD_LIBRARY_PATH=$(conda info --base)/envs/hdmcr/lib:$LD_L
 
 ## 训练参数配置
 
-EC-EFPPO 的超参数在 `legged_gym_go2/legged_gym/envs/go2/go2_config.py` 中的 `GO2EC_EFPPOCfgPPO` 类定义，与 JAX 参考实现对齐：
+EC-EFPPO 的超参数在 `legged_gym_go2/legged_gym/envs/go2/go2_config.py` 中的 `GO2EC_EFPPOCfgPPO` 类定义：
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `gamma_energy` | 1.0 | Energy 折扣因子（无折扣） |
+| **网络结构** | | |
+| `network.hidden_dim` | 512 | 隐藏层维度 |
+| `network.num_hidden_layers` | 4 | 隐藏层数 |
+| `network.activation` | elu | 激活函数 |
+| **算法参数** | | |
+| `gamma_energy` | 0.99 | Energy 折扣因子（Plan B1: 1.0→0.99） |
 | `gamma_reach_init` | 0.999 | Reach 折扣因子初始值 |
 | `gamma_reach_final` | 0.99999 | Reach 折扣因子终止值 |
 | `gae_lambda` | 0.95 | GAE λ 参数 |
 | `clip_eps` | 0.2 | PPO clip 范围 |
-| `vf_coef` | 0.5 | Value function loss 系数 |
+| `vf_coef` | 1.0 | Value function loss 系数 |
 | `entropy_coef` | 0.01 | Entropy 系数 |
 | `max_grad_norm` | 0.5 | 梯度裁剪范数 |
-| `learning_rate` | 3e-4 | 学习率 |
+| `learning_rate` | 1e-3 | 学习率 |
 | `num_learning_epochs` | 10 | 每次更新的训练轮数 |
 | `num_mini_batches` | 8 | Mini-batch 数量 |
+| **训练参数** | | |
 | `num_steps_per_env` | 200 | 每轮 rollout 的时间步数 |
 | `max_iterations` | 1500 | 最大训练轮数 |
-| `hidden_dim` | 256 | 隐藏层维度（2 层） |
-| `activation` | tanh | 激活函数 |
 
 可以通过命令行覆盖配置：
 
@@ -364,6 +368,100 @@ loss_dict = alg.update(gamma_reach=0.99999, entropy_coef=0.01)
 | 6 | 实现 EC-EFPPO 算法核心 | ✅ |
 | 7 | 改造训练脚本 | ✅ |
 | 8 | 调试验证与性能对比 | ✅ |
+
+## 调优记录
+
+### Plan A — 对齐基线超参数（2026-06-01）
+
+**背景**：首次全量训练（1500 轮）成功率仅 2.4%，而基线 Reach-Avoid PPO 在同样环境下达到 69-72%。
+经分析，根因不在轮数不足，而在算法信号链（详见下方对比）。
+
+**改动内容**：
+
+| 文件 | 改动项 | 旧值 | 新值 | 理由 |
+|------|--------|------|------|------|
+| `actor_critic.py` | `EC_EFPPO_ActorCritic` activation 参数 | 硬编码 `nn.Tanh` | 接受字符串参数，默认 `elu` | 对齐基线，防止深层 tanh 梯度消失 |
+| `go2_config.py` | `network.hidden_dim` | — (硬编码 256) | 512 | 对齐基线 4×512 网络容量 |
+| `go2_config.py` | `network.num_hidden_layers` | — (硬编码 2) | 4 | 对齐基线 4 层 MLP |
+| `go2_config.py` | `network.activation` | — (硬编码 tanh) | elu | 对齐基线激活函数 |
+| `go2_config.py` | `algorithm.learning_rate` | 3e-4 | 1e-3 | 对齐基线学习率 |
+| `go2_config.py` | `algorithm.vf_coef` | 0.5 | 1.0 | 对齐基线 value loss 系数 |
+| `go2_config.py` | `runner.resume` | True | False | 新实验不从旧 checkpoint 恢复 |
+| `train_ecfppo.py` | 网络参数读取方式 | 硬编码 | 从 `train_cfg.network` 读取 | 配置化管理 |
+
+**基线对比数据**（Reach-Avoid PPO，相同环境配置）：
+
+| 迭代轮数 | 基线成功率 | EC-EFPPO（改动前） |
+|----------|-----------|-------------------|
+| 50 | 52.2% | 0.8% |
+| 100 | 53.1% | 0.6% |
+| 500 | 61.9% | 1.3% |
+| 1000 | 72.1% | 1.9% |
+| 1500 | 69.1% | 2.4% |
+
+**诊断结论**：EC-EFPPO 的三路 GAE + earliest reach index 组合产生了不正确的梯度信号，
+actor 主要被 reach 信号驱动，energy 优势量级（数百~数千）远大于 reach 优势（~60），
+导致组合优势被 energy 淹没。Plan A 先对齐网络容量和学习率，验证是否为瓶颈。
+
+**Plan A 结果**（`20260601-235003`）：
+
+| 指标 | 旧版 | Plan A | 基线 PPO |
+|------|------|--------|---------|
+| Peak 成功率 | 5.4% | **40.8%** | 74.3% |
+| Final 成功率 | 2.4% | **18.4%** | 69.1% |
+
+Plan A 有效（Peak 5.4%→40.8%），但训练曲线异常：中间阶段（iter 700-1300）成功率反而下降到 3%，
+最后 200 轮突然跳升到 18%。追踪发现 **energy critic 在约 50 轮内崩溃**：
+energy_loss 从 375 爆炸到 10^11 级，然后坍缩到 ≈0 并永不恢复。
+
+### Plan B1 — 修复 γ_energy（2026-06-02）
+
+**背景**：Plan A 验证了网络容量是瓶颈之一（Peak 5.4%→40.8%），但 energy critic 在 50 轮内
+崩溃（energy_loss 爆炸到 10^11 后坍缩到 ≈0），导致策略失去能量优化能力。
+
+**根因**：`γ_energy=1.0`（无折扣）使 energy value targets 等于 200 步无折扣累积能量消耗。
+Go2 环境每步能量消耗 ≈4~24（3 维动作 × scale 8.0），200 步累积达 800~4800，
+MSE loss 量级达 10^7，梯度爆炸导致 energy critic 网络崩溃。
+
+对比 JAX 参考实现的 Pendulum 环境：动作 1 维、有阈值门控（`|u| > 0.1` 才计消耗），
+每步能量 0~8，200 步累积 0~1600，量级可控。
+
+**改动内容**：
+
+| 文件 | 改动项 | 旧值 | 新值 | 理由 |
+|------|--------|------|------|------|
+| `go2_config.py` | `algorithm.gamma_energy` | 1.0 | 0.99 | 使 energy targets 从 ~4000 降到 ~200，critic 可稳定学习 |
+
+**B1 结果**（`20260602-200425`）：
+
+| 指标 | 旧版 | Plan A | B1 | 基线 PPO |
+|------|------|--------|-----|---------|
+| Peak 成功率 | 5.4% | 40.8% | **57.3%** | 74.3% |
+| Final 成功率 | 2.4% | 18.4% | 3.0% | 69.1% |
+| energy_loss 状态 | 崩溃到 ≈0 | 崩溃到 ≈0 | 爆炸后**恢复**到 200~300 | — |
+
+**关键发现**：
+
+1. `γ_energy=0.99` 解决了 energy critic 崩溃问题：energy_loss 仍会在初期膨胀（到 10^12），
+   但约 200 轮后**恢复**到 200~300 的合理范围（Plan A 中 critic 永久崩溃）
+2. Peak 成功率进一步提升到 57.3%（Plan A 为 40.8%），证明 energy critic 恢复后
+   能提供有效的能量优化信号
+3. 但 Final 成功率仅 3.0%，训练仍然极不稳定（成功率在 2%~57% 之间剧烈波动）
+4. 与基线 PPO 的稳步上升（50 轮即达 52%）形成鲜明对比，说明三路 GAE +
+   earliest reach index 的信号传导机制本身存在不稳定性
+
+**四轮实验总览**：
+
+| 阶段 | 旧版 | Plan A | B1 | 基线 PPO |
+|------|------|--------|-----|---------|
+| 1-100 | 0.9% | 3.7% | 3.5% | 39.6% |
+| 101-300 | 0.9% | 4.4% | 3.5% | 53.6% |
+| 301-500 | 1.3% | 4.8% | 4.0% | 57.9% |
+| 501-700 | 0.9% | 7.7% | 3.2% | 65.7% |
+| 701-900 | 1.8% | 4.8% | 2.8% | 71.2% |
+| 901-1100 | 2.6% | 4.0% | 2.8% | 72.0% |
+| 1101-1300 | 2.6% | 2.9% | 3.6% | 70.6% |
+| 1301-1500 | 2.6% | 17.7% | 2.8% | 69.5% |
 
 ## 常见问题
 

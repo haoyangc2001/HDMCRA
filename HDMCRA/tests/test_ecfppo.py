@@ -41,10 +41,12 @@ def fill_buffer_randomly(buffer, obs_dim=48, act_dim=12, seed=123):
             energy=torch.rand(N) * 400,
             energy_consumption=torch.rand(N) * 5,
             g_values=torch.randn(N) * 3,
+            h_values=torch.ones(N) * -1.0,
             dones=torch.zeros(N),
             next_obs=torch.randn(N, obs_dim),
             next_energy=torch.rand(N) * 400,
             next_g=torch.randn(N) * 3,
+            next_h=torch.ones(N) * -1.0,
         )
 
 
@@ -60,6 +62,7 @@ def test_buffer_instantiation():
     assert buffer.energy.shape == (17, 8)  # T+1
     assert buffer.energy_consumption.shape == (16, 8)
     assert buffer.g_values.shape == (17, 8)  # T+1
+    assert buffer.h_values.shape == (17, 8)  # T+1
     assert buffer.dones.shape == (16, 8)
     assert buffer.step == 0
     print("[PASS] test_buffer_instantiation")
@@ -79,10 +82,12 @@ def test_buffer_add():
             energy=torch.rand(N) * 400,
             energy_consumption=torch.rand(N) * 5,
             g_values=torch.randn(N) * 3,
+            h_values=torch.ones(N) * -1.0,
             dones=torch.zeros(N),
             next_obs=torch.randn(N, 48),
             next_energy=torch.rand(N) * 400,
             next_g=torch.randn(N) * 3,
+            next_h=torch.ones(N) * -1.0,
         )
     assert buffer.step == 3
     # 验证数据已存储（非零）
@@ -226,10 +231,12 @@ def test_ecefppo_update():
             energy=torch.rand(8) * 400,
             energy_consumption=torch.rand(8) * 5,
             g_values=torch.randn(8) * 3,
+            h_values=torch.ones(8) * -1.0,
             dones=torch.zeros(8),
             next_obs=torch.randn(8, 48),
             next_energy=torch.rand(8) * 400,
             next_g=torch.randn(8) * 3,
+            next_h=torch.ones(8) * -1.0,
         )
 
     # 计算优势
@@ -285,10 +292,12 @@ def test_independent_gradient_flow():
             energy=torch.rand(16) * 400,
             energy_consumption=torch.rand(16) * 5,
             g_values=torch.randn(16) * 3,
+            h_values=torch.ones(16) * -1.0,
             dones=torch.zeros(16),
             next_obs=torch.randn(16, 48),
             next_energy=torch.rand(16) * 400,
             next_g=torch.randn(16) * 3,
+            next_h=torch.ones(16) * -1.0,
         )
 
     alg.buffer.compute_advantages(
@@ -370,8 +379,9 @@ def test_incomplete_rollout_error():
             log_probs=torch.randn(8), values=torch.randn(8),
             value_reach=torch.randn(8), energy=torch.rand(8) * 400,
             energy_consumption=torch.rand(8) * 5, g_values=torch.randn(8) * 3,
-            dones=torch.zeros(8), next_obs=torch.randn(8, 48),
-            next_energy=torch.rand(8) * 400, next_g=torch.randn(8) * 3,
+            h_values=torch.ones(8) * -1.0, dones=torch.zeros(8),
+            next_obs=torch.randn(8, 48), next_energy=torch.rand(8) * 400,
+            next_g=torch.randn(8) * 3, next_h=torch.ones(8) * -1.0,
         )
     try:
         buffer.compute_advantages(torch.zeros(8), torch.zeros(8), 1.0, 0.999, 0.95, 0.999)

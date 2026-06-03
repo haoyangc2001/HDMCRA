@@ -80,6 +80,7 @@ class EC_EFPPO_Buffer:
         self.energy = torch.zeros(horizon + 1, num_envs, device=device)
         self.energy_consumption = torch.zeros(horizon, num_envs, device=device)
         self.g_values = torch.zeros(horizon + 1, num_envs, device=device)
+        self.h_values = torch.zeros(horizon + 1, num_envs, device=device)
         self.dones = torch.zeros(horizon, num_envs, device=device, dtype=torch.bool)
 
         # 优势和目标（由 compute_advantages 填充）
@@ -102,10 +103,12 @@ class EC_EFPPO_Buffer:
         energy: torch.Tensor,
         energy_consumption: torch.Tensor,
         g_values: torch.Tensor,
+        h_values: torch.Tensor,
         dones: torch.Tensor,
         next_obs: torch.Tensor,
         next_energy: torch.Tensor,
         next_g: torch.Tensor,
+        next_h: torch.Tensor,
     ) -> None:
         """
         存储单步 transition 数据。
@@ -119,10 +122,12 @@ class EC_EFPPO_Buffer:
             energy: [N] 当前剩余能量
             energy_consumption: [N] 本步能量消耗
             g_values: [N] 当前 reach 值（g 值）
+            h_values: [N] 当前安全约束值（h 值）
             dones: [N] 环境终止标志
             next_obs: [N, obs_dim] 下一步观测
             next_energy: [N] 下一步剩余能量
             next_g: [N] 下一步 reach 值
+            next_h: [N] 下一步安全约束值
         """
         idx = self.step
         self.observations[idx] = obs
@@ -133,11 +138,13 @@ class EC_EFPPO_Buffer:
         self.energy[idx] = energy
         self.energy_consumption[idx] = energy_consumption
         self.g_values[idx] = g_values
+        self.h_values[idx] = h_values
         self.dones[idx] = dones.bool()
         # 存储下一步的 bootstrap 数据
         self.observations[idx + 1] = next_obs
         self.energy[idx + 1] = next_energy
         self.g_values[idx + 1] = next_g
+        self.h_values[idx + 1] = next_h
         self.step += 1
 
     def compute_advantages(

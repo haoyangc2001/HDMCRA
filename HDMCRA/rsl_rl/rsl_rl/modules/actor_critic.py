@@ -171,41 +171,44 @@ class EC_EFPPO_ActorCritic(nn.Module):
 
     def __init__(self, num_actor_obs, num_critic_obs, num_actions,
                  hidden_dim=256, num_hidden_layers=2,
-                 init_noise_std=1.0, **kwargs):
+                 init_noise_std=1.0, activation='elu', **kwargs):
         if kwargs:
             print("EC_EFPPO_ActorCritic.__init__ got unexpected arguments, "
                   "which will be ignored: " + str([key for key in kwargs.keys()]))
         super(EC_EFPPO_ActorCritic, self).__init__()
 
-        activation = nn.Tanh
+        if isinstance(activation, str):
+            activation = get_activation(activation)
+        # activation is now an nn.Module class (not instance) — call activation() to instantiate
+        activation_cls = activation if isinstance(activation, type) else type(activation)
 
         # ---- Policy Network (actor) ----
         actor_layers = []
         actor_layers.append(nn.Linear(num_actor_obs, hidden_dim))
-        actor_layers.append(activation())
+        actor_layers.append(activation_cls())
         for _ in range(num_hidden_layers - 1):
             actor_layers.append(nn.Linear(hidden_dim, hidden_dim))
-            actor_layers.append(activation())
+            actor_layers.append(activation_cls())
         actor_layers.append(nn.Linear(hidden_dim, num_actions))
         self.actor = nn.Sequential(*actor_layers)
 
         # ---- Energy Value Network (energy_critic) ----
         energy_critic_layers = []
         energy_critic_layers.append(nn.Linear(num_critic_obs, hidden_dim))
-        energy_critic_layers.append(activation())
+        energy_critic_layers.append(activation_cls())
         for _ in range(num_hidden_layers - 1):
             energy_critic_layers.append(nn.Linear(hidden_dim, hidden_dim))
-            energy_critic_layers.append(activation())
+            energy_critic_layers.append(activation_cls())
         energy_critic_layers.append(nn.Linear(hidden_dim, 1))
         self.energy_critic = nn.Sequential(*energy_critic_layers)
 
         # ---- Reach Value Network (reach_critic) ----
         reach_critic_layers = []
         reach_critic_layers.append(nn.Linear(num_critic_obs, hidden_dim))
-        reach_critic_layers.append(activation())
+        reach_critic_layers.append(activation_cls())
         for _ in range(num_hidden_layers - 1):
             reach_critic_layers.append(nn.Linear(hidden_dim, hidden_dim))
-            reach_critic_layers.append(activation())
+            reach_critic_layers.append(activation_cls())
         reach_critic_layers.append(nn.Linear(hidden_dim, 1))
         self.reach_critic = nn.Sequential(*reach_critic_layers)
 

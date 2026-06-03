@@ -130,9 +130,8 @@ def train_ecfppo(args) -> None:
     env_cfg = GO2HighLevelCfg()
     train_cfg = GO2EC_EFPPOCfgPPO()
 
-    # 网络结构：2层×256+tanh（与 JAX 版对齐，由 EC_EFPPO_ActorCritic 默认值决定）
-    # 这里不设置 actor_hidden_dims/critic_hidden_dims，因为 EC_EFPPO_ActorCritic
-    # 使用自己的 hidden_dim 和 num_hidden_layers 参数
+    # Plan A: 从配置读取网络结构（对齐基线 4×512+elu）
+    net_cfg = train_cfg.network
 
     env_cfg, train_cfg = update_cfg_from_args(env_cfg, train_cfg, args)
 
@@ -149,9 +148,10 @@ def train_ecfppo(args) -> None:
         num_actor_obs=env.num_obs,
         num_critic_obs=env.num_obs,
         num_actions=env.num_actions,
-        hidden_dim=256,
-        num_hidden_layers=2,
+        hidden_dim=net_cfg.hidden_dim,
+        num_hidden_layers=net_cfg.num_hidden_layers,
         init_noise_std=1.0,
+        activation=net_cfg.activation,
     )
 
     # ---- 初始化 EC_EFPPO ----
@@ -250,10 +250,12 @@ def train_ecfppo(args) -> None:
                 energy=energy,
                 energy_consumption=energy_consumption,
                 g_values=g_vals,
+                h_values=h_vals,
                 dones=dones,
                 next_obs=next_obs,
                 next_energy=next_energy,
                 next_g=next_g,
+                next_h=next_h,
             )
 
             obs = next_obs
@@ -277,8 +279,8 @@ def train_ecfppo(args) -> None:
 
         # ---- 成功率和能量消耗 ----
         success_rate, execution_cost, avg_energy = compute_reach_avoid_success_rate(
-            alg.buffer.g_values[1:],       # [T, N] 跳过初始状态
-            alg.buffer.energy[1:],         # [T, N] 跳过初始状态的 h_values
+            alg.buffer.g_values[1:],       # [T, N] g 序列（跳过初始状态）
+            alg.buffer.h_values[1:],       # [T, N] h 序列（跳过初始状态）
             energy_sequence=alg.buffer.energy,  # [T+1, N] 完整能量序列
         )
 

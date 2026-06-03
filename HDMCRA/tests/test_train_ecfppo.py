@@ -19,16 +19,16 @@ from rsl_rl.modules.actor_critic import EC_EFPPO_ActorCritic
 # ---- Test 1: GO2EC_EFPPOCfgPPO 配置类 ----
 def test_config_class():
     cfg = GO2EC_EFPPOCfgPPO()
-    assert cfg.algorithm.gamma_energy == 1.0
+    assert cfg.algorithm.gamma_energy == 0.99
     assert cfg.algorithm.gamma_reach_init == 0.999
     assert cfg.algorithm.gamma_reach_final == 0.99999
     assert cfg.algorithm.gae_lambda == 0.95
     assert cfg.algorithm.clip_eps == 0.2
-    assert cfg.algorithm.vf_coef == 0.5
+    assert cfg.algorithm.vf_coef == 1.0
     assert cfg.algorithm.entropy_coef == 0.01
     assert cfg.algorithm.anneal_entropy == False
     assert cfg.algorithm.max_grad_norm == 0.5
-    assert cfg.algorithm.learning_rate == 3e-4
+    assert cfg.algorithm.learning_rate == 1e-3
     assert cfg.algorithm.num_learning_epochs == 10
     assert cfg.algorithm.num_mini_batches == 8
     assert cfg.runner.experiment_name == 'ecfppo_go2'
@@ -90,10 +90,10 @@ def test_alg_with_config():
         anneal_entropy=cfg.algorithm.anneal_entropy,
         device='cpu',
     )
-    assert alg.gamma_energy == 1.0
+    assert alg.gamma_energy == 0.99
     assert alg.gamma_reach_init == 0.999
     assert alg.clip_param == 0.2
-    assert alg.value_loss_coef == 0.5
+    assert alg.value_loss_coef == 1.0
     assert alg.anneal_entropy == False
     print("[PASS] test_alg_with_config")
 
@@ -161,7 +161,55 @@ def test_num_obs_includes_energy():
     print("[PASS] test_num_obs_includes_energy")
 
 
-# ---- Test 9: 端到端 mini 训练循环（mock） ----
+# ---- Test 9: buffer 正确存储 h_values ----
+def test_buffer_stores_h_values():
+    from rsl_rl.algorithms.ecfppo import EC_EFPPO_Buffer
+    num_envs, horizon, obs_dim, act_dim = 4, 8, 10, 3
+    buf = EC_EFPPO_Buffer(num_envs, horizon, (obs_dim,), (act_dim,), torch.device('cpu'))
+
+    for step in range(horizon):
+        buf.add(
+            obs=torch.randn(num_envs, obs_dim),
+            actions=torch.randn(num_envs, act_dim),
+            log_probs=torch.randn(num_envs),
+            values=torch.randn(num_envs),
+            value_reach=torch.randn(num_envs),
+            energy=torch.rand(num_envs) * 400,
+            energy_consumption=torch.rand(num_envs) * 5,
+            g_values=torch.randn(num_envs),
+            h_values=torch.randn(num_envs),
+            dones=torch.zeros(num_envs),
+            next_obs=torch.randn(num_envs, obs_dim),
+            next_energy=torch.rand(num_envs) * 400,
+            next_g=torch.randn(num_envs),
+            next_h=torch.randn(num_envs),
+        )
+
+    assert buf.h_values.shape == (horizon + 1, num_envs)
+    assert buf.step == horizon
+    print("[PASS] test_buffer_stores_h_values")
+
+
+# ---- Test 10: success rate 正确使用 h_values ----
+def test_success_rate_uses_h_values():
+    from legged_gym.scripts.train_ecfppo import compute_reach_avoid_success_rate
+
+    T, N = 10, 4
+    # g: 全部初始未到达，在 t=5 时到达目标
+    g_seq = torch.ones(T, N) * 0.5
+    g_seq[5:, :] = -0.5  # 全部在 t=5 到达
+    # h: 前 2 个环境在 t=3 进入不安全区域（h >= 0），后 2 个始终安全
+    h_seq = torch.ones(T, N) * -1.0
+    h_seq[3:, :2] = 0.5  # env 0,1 在 t=3 不安全（早于 t=5 的到达）
+
+    success_rate, _, _ = compute_reach_avoid_success_rate(g_seq, h_seq)
+    # env 0,1: 到达前有 h >= 0 → 不安全 → 失败
+    # env 2,3: 到达前 h < 0 → 安全 → 成功
+    assert success_rate == 0.5, f"expected 0.5, got {success_rate}"
+    print("[PASS] test_success_rate_uses_h_values")
+
+
+# ---- Test 11: 端到端 mini 训练循环（mock） ----
 def test_mini_training_loop():
     """用随机数据模拟一个完整的 mini 训练循环。"""
     torch.manual_seed(42)
@@ -193,6 +241,7 @@ def test_mini_training_loop():
 
     obs = torch.randn(num_envs, obs_dim)
     g_vals = torch.randn(num_envs) * 3
+    h_vals = torch.ones(num_envs) * -1.0  # 初始安全
     energy = torch.rand(num_envs) * 400
 
     # Rollout
@@ -200,6 +249,7 @@ def test_mini_training_loop():
         actions, log_probs, vals_e, vals_r = alg.act(obs)
         next_obs = torch.randn(num_envs, obs_dim)
         next_g = torch.randn(num_envs) * 3
+        next_h = torch.ones(num_envs) * -1.0
         next_energy = torch.rand(num_envs) * 400
         energy_consumption = torch.rand(num_envs) * 5
         dones = torch.zeros(num_envs)
@@ -208,11 +258,12 @@ def test_mini_training_loop():
             obs=obs, actions=actions, log_probs=log_probs,
             values=vals_e, value_reach=vals_r,
             energy=energy, energy_consumption=energy_consumption,
-            g_values=g_vals, dones=dones,
-            next_obs=next_obs, next_energy=next_energy, next_g=next_g,
+            g_values=g_vals, h_values=h_vals, dones=dones,
+            next_obs=next_obs, next_energy=next_energy, next_g=next_g, next_h=next_h,
         )
         obs = next_obs
         g_vals = next_g
+        h_vals = next_h
         energy = next_energy
 
     # Bootstrap
@@ -246,6 +297,8 @@ if __name__ == '__main__':
         test_success_rate_without_energy,
         test_import_train_script,
         test_num_obs_includes_energy,
+        test_buffer_stores_h_values,
+        test_success_rate_uses_h_values,
         test_mini_training_loop,
     ]
     passed = 0
