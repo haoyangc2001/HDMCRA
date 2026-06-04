@@ -384,6 +384,8 @@ class HighLevelNavigationConfig:
         self.enable_manual_lidar = True
         self.lidar_max_range = 10.0
         self.lidar_num_bins = 16
+        self.target_lidar_num_bins = 16
+        self.target_lidar_max_range = 10.0
         self.boundary_half_extents = (3.0, 3.0)
         self.boundary_margin = 0.25
 

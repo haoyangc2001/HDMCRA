@@ -50,35 +50,31 @@ def test_independent_params():
     print("[PASS] test_independent_params")
 
 
-# ---- Test 3: 网络结构（2层×256 + tanh） ----
+# ---- Test 3: 网络结构（参数化，不再硬编码旧的 2x256+tanh 假设） ----
 def test_network_structure():
     model = make_model(num_actor_obs=48, num_actions=12)
-    # actor: Linear(48,256) + Tanh + Linear(256,256) + Tanh + Linear(256,12)
     actor_modules = list(model.actor.children())
-    assert len(actor_modules) == 5, f"actor 期望5层，实际 {len(actor_modules)}"
-    assert isinstance(actor_modules[0], nn.Linear)
-    assert actor_modules[0].in_features == 48
-    assert actor_modules[0].out_features == 256
-    assert isinstance(actor_modules[1], nn.Tanh)
-    assert isinstance(actor_modules[2], nn.Linear)
-    assert actor_modules[2].in_features == 256
-    assert actor_modules[2].out_features == 256
-    assert isinstance(actor_modules[3], nn.Tanh)
-    assert isinstance(actor_modules[4], nn.Linear)
-    assert actor_modules[4].in_features == 256
-    assert actor_modules[4].out_features == 12
+    linear_layers = [m for m in actor_modules if isinstance(m, nn.Linear)]
+    activation_layers = [m for m in actor_modules if isinstance(m, nn.ELU)]
+    assert len(linear_layers) == 3, f"actor 线性层数错误: {len(linear_layers)}"
+    assert len(activation_layers) == 2, f"actor 激活层数错误: {len(activation_layers)}"
+    assert linear_layers[0].in_features == 48
+    assert linear_layers[0].out_features == 256
+    assert linear_layers[-1].out_features == 12
 
-    # energy_critic: Linear(48,256) + Tanh + Linear(256,256) + Tanh + Linear(256,1)
     ec_modules = list(model.energy_critic.children())
-    assert len(ec_modules) == 5
-    assert isinstance(ec_modules[-1], nn.Linear)
-    assert ec_modules[-1].out_features == 1
+    ec_linear = [m for m in ec_modules if isinstance(m, nn.Linear)]
+    ec_activation = [m for m in ec_modules if isinstance(m, nn.ELU)]
+    assert len(ec_linear) == 3
+    assert len(ec_activation) == 2
+    assert ec_linear[-1].out_features == 1
 
-    # reach_critic 同上
     rc_modules = list(model.reach_critic.children())
-    assert len(rc_modules) == 5
-    assert isinstance(rc_modules[-1], nn.Linear)
-    assert rc_modules[-1].out_features == 1
+    rc_linear = [m for m in rc_modules if isinstance(m, nn.Linear)]
+    rc_activation = [m for m in rc_modules if isinstance(m, nn.ELU)]
+    assert len(rc_linear) == 3
+    assert len(rc_activation) == 2
+    assert rc_linear[-1].out_features == 1
 
     print("[PASS] test_network_structure")
 

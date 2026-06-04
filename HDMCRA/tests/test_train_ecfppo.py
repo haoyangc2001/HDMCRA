@@ -120,8 +120,8 @@ def test_success_rate_with_energy():
 
     assert success_rate == 0.5, f"success_rate: {success_rate}"
     assert exec_cost == 10.0, f"exec_cost: {exec_cost}"
-    # 初始能量 400，到达时能量 400 - 10*5 = 350，消耗 50
-    assert abs(avg_energy - 50.0) < 1e-4, f"avg_energy: {avg_energy}"
+    # g_seq[10] 首次到达，对应 energy_seq[11]，消耗 11 * 5 = 55
+    assert abs(avg_energy - 55.0) < 1e-4, f"avg_energy: {avg_energy}"
     print(f"  success_rate={success_rate}, exec_cost={exec_cost}, avg_energy={avg_energy}")
     print("[PASS] test_success_rate_with_energy")
 
@@ -140,6 +140,34 @@ def test_success_rate_without_energy():
     assert exec_cost == 5.0
     assert avg_energy == 0.0  # 无 energy_sequence 时返回 0
     print("[PASS] test_success_rate_without_energy")
+
+
+def test_success_rate_energy_alignment_uses_post_step_state():
+    from legged_gym.scripts.train_ecfppo import compute_reach_avoid_success_rate
+
+    T, N = 6, 2
+    g_seq = torch.ones(T, N)
+    h_seq = -torch.ones(T, N)
+    g_seq[2:, 0] = -1.0  # env0 在 t=2 首次到达
+    g_seq[4:, 1] = -1.0  # env1 在 t=4 首次到达
+
+    energy_seq = torch.tensor([
+        [100.0, 200.0],
+        [ 95.0, 190.0],
+        [ 90.0, 180.0],
+        [ 85.0, 170.0],
+        [ 80.0, 160.0],
+        [ 75.0, 150.0],
+        [ 70.0, 140.0],
+    ])
+
+    success_rate, exec_cost, avg_energy = compute_reach_avoid_success_rate(g_seq, h_seq, energy_seq)
+    assert success_rate == 1.0
+    assert exec_cost == 3.0
+    # env0: first_success=2 -> energy[3]=85, 消耗15
+    # env1: first_success=4 -> energy[5]=150, 消耗50
+    assert abs(avg_energy - 32.5) < 1e-4, f"avg_energy: {avg_energy}"
+    print("[PASS] test_success_rate_energy_alignment_uses_post_step_state")
 
 
 # ---- Test 7: 训练脚本可导入 ----
@@ -295,6 +323,7 @@ if __name__ == '__main__':
         test_alg_with_config,
         test_success_rate_with_energy,
         test_success_rate_without_energy,
+        test_success_rate_energy_alignment_uses_post_step_state,
         test_import_train_script,
         test_num_obs_includes_energy,
         test_buffer_stores_h_values,

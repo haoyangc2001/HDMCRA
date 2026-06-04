@@ -50,6 +50,67 @@ def fill_buffer_randomly(buffer, obs_dim=48, act_dim=12, seed=123):
         )
 
 
+def test_buffer_time_semantics():
+    """P1: buffer 的 [t] / [t+1] 语义必须稳定。"""
+    _, buffer, _ = make_model_and_buffer(num_envs=2, horizon=2, obs_dim=3, act_dim=1)
+    obs0 = torch.tensor([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    next_obs0 = torch.tensor([[1.5, 0.0, 0.0], [2.5, 0.0, 0.0]])
+    obs1 = next_obs0.clone()
+    next_obs1 = torch.tensor([[2.0, 0.0, 0.0], [3.0, 0.0, 0.0]])
+
+    buffer.add(
+        obs=obs0, actions=torch.zeros(2, 1), log_probs=torch.zeros(2),
+        values=torch.zeros(2), value_reach=torch.zeros(2),
+        energy=torch.tensor([10.0, 20.0]), energy_consumption=torch.tensor([1.0, 2.0]),
+        g_values=torch.tensor([5.0, 6.0]), h_values=torch.tensor([-1.0, -1.0]),
+        dones=torch.zeros(2), next_obs=next_obs0, next_energy=torch.tensor([9.0, 18.0]),
+        next_g=torch.tensor([4.0, 5.0]), next_h=torch.tensor([-1.0, -1.0]),
+    )
+    buffer.add(
+        obs=obs1, actions=torch.zeros(2, 1), log_probs=torch.zeros(2),
+        values=torch.zeros(2), value_reach=torch.zeros(2),
+        energy=torch.tensor([9.0, 18.0]), energy_consumption=torch.tensor([1.0, 3.0]),
+        g_values=torch.tensor([4.0, 5.0]), h_values=torch.tensor([-1.0, -1.0]),
+        dones=torch.zeros(2), next_obs=next_obs1, next_energy=torch.tensor([8.0, 15.0]),
+        next_g=torch.tensor([3.0, 4.0]), next_h=torch.tensor([-1.0, -1.0]),
+    )
+
+    assert torch.allclose(buffer.observations[0], obs0)
+    assert torch.allclose(buffer.observations[1], next_obs0)
+    assert torch.allclose(buffer.observations[2], next_obs1)
+    assert torch.allclose(buffer.energy[0], torch.tensor([10.0, 20.0]))
+    assert torch.allclose(buffer.energy[1], torch.tensor([9.0, 18.0]))
+    assert torch.allclose(buffer.energy[2], torch.tensor([8.0, 15.0]))
+    assert torch.allclose(buffer.g_values[1], torch.tensor([4.0, 5.0]))
+    print("[PASS] test_buffer_time_semantics")
+
+
+def test_combined_advantage_uses_gamma_reach_init():
+    """P1: combined advantage 当前约定使用 gamma_reach_init，而不是 gamma_reach。"""
+    _, buffer, _ = make_model_and_buffer(num_envs=2, horizon=4, obs_dim=6, act_dim=2)
+    fill_buffer_randomly(buffer, obs_dim=6, act_dim=2, seed=321)
+    last_energy = torch.rand(2) * 10
+    last_reach = torch.randn(2)
+
+    buffer.compute_advantages(
+        last_energy, last_reach,
+        gamma_energy=0.99, gamma_reach=0.5,
+        gae_lambda=0.95, gamma_reach_init=0.999,
+    )
+    adv_with_init = buffer.advantages_total.clone()
+
+    buffer.compute_advantages(
+        last_energy, last_reach,
+        gamma_energy=0.99, gamma_reach=0.1,
+        gae_lambda=0.95, gamma_reach_init=0.999,
+    )
+    adv_with_same_init = buffer.advantages_total.clone()
+
+    assert torch.allclose(adv_with_init, adv_with_same_init), \
+        'combined advantage should depend on gamma_reach_init, not current gamma_reach'
+    print("[PASS] test_combined_advantage_uses_gamma_reach_init")
+
+
 # ---- Test 1: Buffer 实例化 ----
 def test_buffer_instantiation():
     _, buffer, _ = make_model_and_buffer()
@@ -393,6 +454,8 @@ def test_incomplete_rollout_error():
 
 if __name__ == '__main__':
     tests = [
+        test_buffer_time_semantics,
+        test_combined_advantage_uses_gamma_reach_init,
         test_buffer_instantiation,
         test_buffer_add,
         test_buffer_clear,

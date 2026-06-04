@@ -114,20 +114,20 @@ class EC_EFPPO_Buffer:
         存储单步 transition 数据。
 
         Args:
-            obs: [N, obs_dim] 当前观测
-            actions: [N, act_dim] 采样的动作
-            log_probs: [N] 动作的 log 概率
-            values: [N] energy critic 预测
-            value_reach: [N] reach critic 预测
-            energy: [N] 当前剩余能量
-            energy_consumption: [N] 本步能量消耗
-            g_values: [N] 当前 reach 值（g 值）
-            h_values: [N] 当前安全约束值（h 值）
-            dones: [N] 环境终止标志
-            next_obs: [N, obs_dim] 下一步观测
-            next_energy: [N] 下一步剩余能量
-            next_g: [N] 下一步 reach 值
-            next_h: [N] 下一步安全约束值
+            obs: [N, obs_dim] 当前高层决策前的状态 s_t 观测
+            actions: [N, act_dim] 在 s_t 采样的高层动作 a_t
+            log_probs: [N] a_t 在 s_t 下的 log 概率
+            values: [N] energy critic 在 s_t 的预测
+            value_reach: [N] reach critic 在 s_t 的预测
+            energy: [N] 状态 s_t 的剩余能量
+            energy_consumption: [N] 执行动作 a_t 后，从 s_t -> s_{t+1} 的本步能量消耗
+            g_values: [N] 状态 s_t 的 reach 值（g 值）
+            h_values: [N] 状态 s_t 的安全约束值（h 值）
+            dones: [N] 执行动作 a_t 后到达 s_{t+1} 时的环境终止标志
+            next_obs: [N, obs_dim] 下一步状态 s_{t+1} 观测
+            next_energy: [N] 状态 s_{t+1} 的剩余能量
+            next_g: [N] 状态 s_{t+1} 的 reach 值
+            next_h: [N] 状态 s_{t+1} 的安全约束值
         """
         idx = self.step
         self.observations[idx] = obs
@@ -160,11 +160,12 @@ class EC_EFPPO_Buffer:
         核心优势计算。对应 JAX 版 _train 中的优势计算部分。
 
         执行流程：
-        1. 调用 calculate_indexs3 计算 earliest reach index → done 矩阵
-        2. 将环境 dones 合并到 done 矩阵
-        3. 计算 reach 优势 (advantages_h, targets_h)
-        4. 计算 energy 优势 (advantages_V, targets_V)
-        5. 计算组合优势 (advantages_total)
+        1. 缓冲区中 [t] 行统一表示决策前状态 s_t，[t+1] 行表示执行动作后的状态 s_{t+1}
+        2. 调用 calculate_indexs3 计算 earliest reach index → done 矩阵
+        3. 将环境 dones 合并到 done 矩阵
+        4. 计算 reach 优势 (advantages_h, targets_h)
+        5. 计算 energy 优势 (advantages_V, targets_V)
+        6. 计算组合优势 (advantages_total)
 
         Args:
             last_values_energy: [N] 最后一步的 energy value 预测
@@ -227,6 +228,9 @@ class EC_EFPPO_Buffer:
         )
 
         # ---- Step 5: 计算组合优势 ----
+        # 这里刻意沿用 JAX 参考实现的口径：combined advantage 使用 gamma_reach_init，
+        # 而不是当前退火后的 gamma_reach。该设计用于让策略更新信号保持一个固定的
+        # 初始 reach 折扣语义；如需改成当前 gamma_reach，必须同步更新测试和文档。
         advantages_total, _ = calculate_reach_gae(
             gamma_reach_init, gae_lambda, g_append, V_total_append, done_for_gae
         )

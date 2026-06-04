@@ -48,14 +48,14 @@ HDMCRA/
 │       │   └── actor_critic_recurrent.py
 │       ├── algorithms/
 │       │   ├── ecfppo.py                    # EC_EFPPO 训练器 + EC_EFPPO_Buffer ★
-│       │   ├── ecfppo_gae.py                # 三路 GAE 算法（calculate_indexs3、energy_gae、reach_gae） ★
+│       │   ├── ecfppo_gae.py                # 三路 GAE 算法（已补 JAX 参考逻辑对拍测试） ★
 │       │   ├── ppo.py                       # 标准 PPO
 │       │   └── reach_avoid_ppo.py           # Reach-Avoid PPO 基线
 │       ├── runners/
 │       │   └── on_policy_runner.py          # 训练循环封装
 │       └── storage/
 │
-├── tests/                               # 回归测试（共 42 个）
+├── tests/                               # 回归测试（当前至少覆盖 GAE、Buffer、训练脚本、Energy 状态等关键路径）
 │   ├── test_ecfppo_actor_critic.py          # 三网络架构测试（12 个）
 │   ├── test_ecfppo_gae.py                   # GAE 算法测试（9 个）
 │   ├── test_ecfppo.py                       # EC-EFPPO 训练器 + Buffer 测试（13 个）
@@ -142,6 +142,18 @@ HDMCRA/
       ▼                                       │
  返回 (obs, g, h, energy, consumption)        │
 ```
+
+## 当前状态
+
+当前项目已完成 P0/P1 级别的实现修复：
+- EC-EFPPO 的核心 GAE 逻辑和 earliest reach index 语义已按 JAX 参考实现修正并补充对拍测试。
+- env_cfg 到底层 GO2 环境的传递链路已修复，高层配置透传缺口已补齐。
+- success_rate / avg_energy_consumption 的时间对齐、rollout/bootstrap 的时序定义、combined advantage 的 gamma 口径已在代码和测试中固化。
+
+当前仍需注意：
+- 本项目是“基于 JAX 参考实现、适配 Go2 任务的 PyTorch 移植版”，不是“未经偏离的 JAX 原样复刻版”。
+- 当前默认训练配置使用 4×512+elu（对齐 Go2 基线），不是早期文档中的 2×256+tanh。
+- 全量训练对比和 JAX 简化环境交叉验证尚未重新完整执行，因此训练效果结论仍应以最新实验为准。
 
 ## 快速上手
 
@@ -421,7 +433,7 @@ loss_dict = alg.update(gamma_reach=0.99999, entropy_coef=0.01)
 
 | 轮次 | 名称 | 日期 | 关键改动 |
 |------|------|------|----------|
-| 1 | 对齐基线超参数 | 2026-06-01 | 网络 2×256→4×512，LR 3e-4→1e-3，vf_coef 0.5→1.0 |
+| 1 | 对齐基线超参数 | 2026-06-01 | 当前默认训练配置切换为 4×512+elu，LR 3e-4→1e-3，vf_coef 0.5→1.0 |
 | 2 | 修复 γ_energy | 2026-06-02 | gamma_energy 1.0→0.99，解决 energy critic 崩溃 |
 | 3 | 修复实现正确性 Bug | 2026-06-03 | 6 个 Bug（success rate、reset 时序、能耗计算等） |
 

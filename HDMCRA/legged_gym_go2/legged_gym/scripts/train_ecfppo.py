@@ -113,11 +113,16 @@ def compute_reach_avoid_success_rate(
         # 能量消耗统计
         avg_energy_consumption = 0.0
         if energy_sequence is not None and success.sum().item() > 0:
-            # energy_sequence: [T+1, N]，初始能量 - 最终能量 = 总消耗
-            # 使用 first_success 索引来获取到达目标时的能量
+            # g/h 序列长度为 T，对应 rollout 中每一步后的状态；energy 序列长度为 T+1，
+            # 其中 energy[0] 是初始状态，energy[t+1] 才是执行第 t 步动作后的能量。
+            # 因此第一次到达目标的 g 索引 first_indices 需要映射到 energy 的 first_indices + 1。
             init_energy = energy_sequence[0]  # [N]
-            # 对于成功环境，使用到达目标时的能量
-            reach_energy = energy_sequence[first_indices, torch.arange(num_envs)]  # [N]
+            energy_indices = torch.where(
+                has_success,
+                first_indices + 1,
+                torch.full_like(first_indices, time_steps),
+            )
+            reach_energy = energy_sequence[energy_indices, torch.arange(num_envs)]  # [N]
             energy_used = init_energy - reach_energy  # [N] 正值表示消耗
             avg_energy_consumption = energy_used[success].mean().item()
 

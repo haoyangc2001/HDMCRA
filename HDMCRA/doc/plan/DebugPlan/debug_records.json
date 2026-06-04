@@ -64,19 +64,49 @@
         }
       ],
       "baseline_comparison": {
-        "iterations": [50, 100, 500, 1000, 1500],
-        "baseline_success_rate": [52.2, 53.1, 61.9, 72.1, 69.1],
-        "ecfppo_before": [0.8, 0.6, 1.3, 1.9, 2.4]
+        "iterations": [
+          50,
+          100,
+          500,
+          1000,
+          1500
+        ],
+        "baseline_success_rate": [
+          52.2,
+          53.1,
+          61.9,
+          72.1,
+          69.1
+        ],
+        "ecfppo_before": [
+          0.8,
+          0.6,
+          1.3,
+          1.9,
+          2.4
+        ]
       },
       "diagnosis": "EC-EFPPO 的三路 GAE + earliest reach index 组合产生了不正确的梯度信号，actor 主要被 reach 信号驱动，energy 优势量级（数百~数千）远大于 reach 优势（~60），导致组合优势被 energy 淹没。Plan A 先对齐网络容量和学习率，验证是否为瓶颈。",
       "result": {
         "experiment_id": "20260601-235003",
         "metrics": {
-          "old_version": {"peak_success_rate": 5.4, "final_success_rate": 2.4},
-          "plan_a": {"peak_success_rate": 40.8, "final_success_rate": 18.4},
-          "baseline_ppo": {"peak_success_rate": 74.3, "final_success_rate": 69.1}
+          "old_version": {
+            "peak_success_rate": 5.4,
+            "final_success_rate": 2.4
+          },
+          "plan_a": {
+            "peak_success_rate": 40.8,
+            "final_success_rate": 18.4
+          },
+          "baseline_ppo": {
+            "peak_success_rate": 74.3,
+            "final_success_rate": 69.1
+          }
         },
-        "finding": "Plan A 有效（Peak 5.4%→40.8%），但训练曲线异常：中间阶段（iter 700-1300）成功率反而下降到 3%，最后 200 轮突然跳升到 18%。追踪发现 energy critic 在约 50 轮内崩溃：energy_loss 从 375 爆炸到 10^11 级，然后坍缩到 ≈0 并永不恢复。"
+        "finding": "Plan A 有效（Peak 5.4%→40.8%），但训练曲线异常：中间阶段（iter 700-1300）成功率反而下降到 3%，最后 200 轮突然跳升到 18%。追踪发现 energy critic 在约 50 轮内崩溃：energy_loss 从 375 爆炸到 10^11 级，然后坍缩到 ≈0 并永不恢复。",
+        "key_findings": [
+          "受 2026-06-03 之后确认的统计口径 Bug 影响，success_rate / avg_energy_consumption 相关结论仅可作趋势参考，不能再视为严格可比的最终证据。"
+        ]
       }
     },
     {
@@ -97,10 +127,22 @@
       "result": {
         "experiment_id": "20260602-200425",
         "metrics": {
-          "old_version": {"peak_success_rate": 5.4, "final_success_rate": 2.4},
-          "plan_a": {"peak_success_rate": 40.8, "final_success_rate": 18.4},
-          "plan_b1": {"peak_success_rate": 57.3, "final_success_rate": 3.0},
-          "baseline_ppo": {"peak_success_rate": 74.3, "final_success_rate": 69.1}
+          "old_version": {
+            "peak_success_rate": 5.4,
+            "final_success_rate": 2.4
+          },
+          "plan_a": {
+            "peak_success_rate": 40.8,
+            "final_success_rate": 18.4
+          },
+          "plan_b1": {
+            "peak_success_rate": 57.3,
+            "final_success_rate": 3.0
+          },
+          "baseline_ppo": {
+            "peak_success_rate": 74.3,
+            "final_success_rate": 69.1
+          }
         },
         "energy_loss_status": {
           "old_version": "崩溃到 ≈0",
@@ -111,15 +153,61 @@
           "γ_energy=0.99 解决了 energy critic 崩溃问题：energy_loss 仍会在初期膨胀（到 10^12），但约 200 轮后恢复到 200~300 的合理范围",
           "Peak 成功率进一步提升到 57.3%（Plan A 为 40.8%），证明 energy critic 恢复后能提供有效的能量优化信号",
           "但 Final 成功率仅 3.0%，训练仍然极不稳定（成功率在 2%~57% 之间剧烈波动）",
-          "与基线 PPO 的稳步上升（50 轮即达 52%）形成鲜明对比，说明三路 GAE + earliest reach index 的信号传导机制本身存在不稳定性"
+          "与基线 PPO 的稳步上升（50 轮即达 52%）形成鲜明对比，说明三路 GAE + earliest reach index 的信号传导机制本身存在不稳定性",
+          "受 2026-06-03 之后确认的统计口径 Bug 影响，success_rate / avg_energy_consumption 相关结论仅可作趋势参考，不能再视为严格可比的最终证据。"
         ]
       },
       "four_round_summary": {
-        "iterations": ["1-100", "101-300", "301-500", "501-700", "701-900", "901-1100", "1101-1300", "1301-1500"],
-        "old_version": [0.9, 0.9, 1.3, 0.9, 1.8, 2.6, 2.6, 2.6],
-        "plan_a": [3.7, 4.4, 4.8, 7.7, 4.8, 4.0, 2.9, 17.7],
-        "plan_b1": [3.5, 3.5, 4.0, 3.2, 2.8, 2.8, 3.6, 2.8],
-        "baseline_ppo": [39.6, 53.6, 57.9, 65.7, 71.2, 72.0, 70.6, 69.5]
+        "iterations": [
+          "1-100",
+          "101-300",
+          "301-500",
+          "501-700",
+          "701-900",
+          "901-1100",
+          "1101-1300",
+          "1301-1500"
+        ],
+        "old_version": [
+          0.9,
+          0.9,
+          1.3,
+          0.9,
+          1.8,
+          2.6,
+          2.6,
+          2.6
+        ],
+        "plan_a": [
+          3.7,
+          4.4,
+          4.8,
+          7.7,
+          4.8,
+          4.0,
+          2.9,
+          17.7
+        ],
+        "plan_b1": [
+          3.5,
+          3.5,
+          4.0,
+          3.2,
+          2.8,
+          2.8,
+          3.6,
+          2.8
+        ],
+        "baseline_ppo": [
+          39.6,
+          53.6,
+          57.9,
+          65.7,
+          71.2,
+          72.0,
+          70.6,
+          69.5
+        ]
       }
     },
     {
@@ -236,6 +324,389 @@
           "修复前测试断言旧配置值，掩盖了真实 Bug（测试问题）",
           "Plan 1 和 Plan 2 的训练数据因 Bug B1-B5 存在，成功率和能耗统计不可直接使用"
         ]
+      }
+    },
+    {
+      "plan_id": "4",
+      "plan_name": "P0 修复：GAE 数学核心与配置链路",
+      "date": "2026-06-04",
+      "background": "Step 16 的严格代码审查确认了四个 P0 风险：calculate_reach_gae() 可能不等价于 JAX 原版；calculate_indexs3() 的候选拼接和时间反转语义可疑；env_cfg 没有显式传到底层 GO2 环境；高层配置透传不完整。继续在这些基础问题未修复的前提下分析训练效果没有意义。",
+      "changes": [
+        {
+          "file": "rsl_rl/rsl_rl/algorithms/ecfppo_gae.py",
+          "item": "calculate_reach_gae",
+          "old_value": "使用 value_table[0] 和广播常量行构造 Vhs_row，时序 DP 与 JAX 不一致",
+          "new_value": "按 JAX calculate_gae_reach4 重写，使用完整 value_table 做 DP，并保留 done 边界系数递推",
+          "reason": "修复 reach critic 与 combined advantage 的核心训练信号"
+        },
+        {
+          "file": "rsl_rl/rsl_rl/algorithms/ecfppo_gae.py",
+          "item": "calculate_indexs3",
+          "old_value": "V_total/V_next 构造与 JAX 的时间反转/候选拼接语义存在实现风险",
+          "new_value": "对齐 JAX calculate_indexs3 的 V_total、V_next、done 写入和 mask_1 滚动逻辑",
+          "reason": "修复 earliest reach index 的核心定义"
+        },
+        {
+          "file": "legged_gym_go2/legged_gym/envs/go2/hierarchical_go2_env.py",
+          "item": "_create_base_env",
+          "old_value": "task_registry.make_env(name='go2', args=self.args)",
+          "new_value": "task_registry.make_env(name='go2', args=self.args, env_cfg=self.cfg)",
+          "reason": "确保训练脚本中的 env_cfg 真正作用于底层 GO2 仿真环境"
+        },
+        {
+          "file": "legged_gym_go2/legged_gym/envs/go2/hierarchical_go2_env.py",
+          "item": "_update_high_level_config",
+          "old_value": "仅透传障碍物和部分 lidar 参数",
+          "new_value": "补齐 target_lidar、action_scale、energy、boundary 等高层实际使用字段",
+          "reason": "消除配置文件与运行时行为不一致的问题"
+        },
+        {
+          "file": "legged_gym_go2/legged_gym/envs/go2/high_level_navigation_env.py",
+          "item": "HighLevelNavigationConfig 默认字段",
+          "old_value": "缺少 target_lidar_num_bins / target_lidar_max_range",
+          "new_value": "补充 target_lidar_num_bins=16 和 target_lidar_max_range=10.0",
+          "reason": "让高层配置对象自身完整可用"
+        },
+        {
+          "file": "tests/test_ecfppo_gae.py",
+          "item": "P0 数学测试",
+          "old_value": "仅验证形状和有限值",
+          "new_value": "增加 calculate_indexs3 / calculate_reach_gae 与参考逻辑的逐值对拍测试",
+          "reason": "把“可运行”提升为“数学行为可验证”"
+        },
+        {
+          "file": "tests/test_energy_state.py",
+          "item": "P0 配置测试",
+          "old_value": "未检查高层配置字段完整性",
+          "new_value": "新增 test_high_level_config_has_p0_fields",
+          "reason": "防止高层 wrapper 继续依赖隐式默认值"
+        }
+      ],
+      "result": {
+        "status": "P0 修复完成并通过回归测试",
+        "test_results": {
+          "test_ecfppo_gae.py": "11/11 passed",
+          "test_energy_state.py": "11/11 passed",
+          "test_ecfppo.py": "13/13 passed",
+          "py_compile": "passed"
+        },
+        "key_findings": [
+          "calculate_reach_gae() 之前的实现确实缺失了 JAX 原版的完整时序 DP 结构，P0 判断成立。",
+          "calculate_indexs3() 已通过 reference 对拍测试，关键时间反转和候选拼接逻辑现在可验证。",
+          "env_cfg 传递链路问题属实，原实现底层环境构造未显式使用训练脚本中的 env_cfg。",
+          "高层配置对象默认字段不完整的问题属实，新增测试后立即暴露并修复。",
+          "在 P0 修复完成前，对训练曲线作进一步性能解读风险很高；修复后才具备进入 P1 时序对齐工作的条件。"
+        ]
+      }
+    },
+    {
+      "plan_id": "5",
+      "plan_name": "P1 修复：能耗统计时间对齐",
+      "date": "2026-06-04",
+      "background": "在 P0 数学核心和配置链路修复完成后，Step 17 的 P1 首先聚焦于 success/energy 统计的时序一致性。静态审查发现 compute_reach_avoid_success_rate() 使用 g_sequence 中的 first_success 索引直接访问 energy_sequence[first_indices]，这会把“第 t 步首次到达目标”错误映射到“动作执行前能量”，系统性少算一步能耗。",
+      "changes": [
+        {
+          "file": "legged_gym_go2/legged_gym/scripts/train_ecfppo.py",
+          "item": "compute_reach_avoid_success_rate / avg_energy_consumption",
+          "old_value": "reach_energy = energy_sequence[first_indices, arange(num_envs)]",
+          "new_value": "首次到达 g[t] 映射到 post-step energy[t+1]，并为未成功环境增加边界保护",
+          "reason": "统一 g/h 和 energy 的时间语义，避免能耗统计少算一步或无成功环境越界"
+        },
+        {
+          "file": "tests/test_train_ecfppo.py",
+          "item": "success/energy 统计测试",
+          "old_value": "仅覆盖旧口径，test_success_rate_with_energy 期望值为 50.0",
+          "new_value": "期望值更新为 55.0，并新增 post-step energy 对齐测试",
+          "reason": "把时间对齐从隐式假设变成显式回归测试"
+        }
+      ],
+      "result": {
+        "status": "P1 第一部分完成",
+        "test_results": {
+          "test_train_ecfppo.py": "12/12 passed"
+        },
+        "key_findings": [
+          "success_rate 和 execution_cost 的口径与基线一致，不需要调整。",
+          "avg_energy_consumption 之前确实少算了一步能耗，P1 判断成立。",
+          "未成功环境在 first_indices=time_steps 时需要单独边界处理，否则 +1 会越界。",
+          "17.5 已完成，但 17.6（rollout/bootstrap 时序统一）和 17.7（combined advantage / gamma 口径）仍待继续。"
+        ]
+      }
+    },
+    {
+      "plan_id": "6",
+      "plan_name": "P1 修复：rollout 时序语义与 combined advantage 口径固化",
+      "date": "2026-06-04",
+      "background": "在完成 P1 的 energy 时间对齐后，剩余的高风险点集中在 rollout / bootstrap / done_for_gae 的时间语义是否统一，以及 combined advantage 是否错误使用了 gamma_reach_init。JAX 参考训练循环显示：combined advantage 确实刻意使用 GAMMA_REACH_INIT，而不是当前退火后的 gamma。",
+      "changes": [
+        {
+          "file": "rsl_rl/rsl_rl/algorithms/ecfppo.py",
+          "item": "buffer.add / compute_advantages 注释与时序定义",
+          "old_value": "s_t / s_{t+1} 的语义主要依赖隐式理解，done_for_gae / bootstrap 口径未文档化",
+          "new_value": "显式定义 [t] 行为决策前状态 s_t，[t+1] 行为动作后状态 s_{t+1}，并在 compute_advantages 中固化该时序解释",
+          "reason": "统一 rollout、bootstrap、统计函数和测试的时间语义"
+        },
+        {
+          "file": "rsl_rl/rsl_rl/algorithms/ecfppo.py",
+          "item": "combined advantage gamma 口径说明",
+          "old_value": "gamma_reach_init 用于 combined advantage，但代码未明确这是设计选择还是误实现",
+          "new_value": "补充显式注释，说明该行为与 JAX 参考实现一致，属于有意设计",
+          "reason": "避免未来再次误判为 bug 或无意修改算法定义"
+        },
+        {
+          "file": "tests/test_ecfppo.py",
+          "item": "P1 语义测试",
+          "old_value": "缺少 buffer 时序语义测试和 combined advantage gamma 口径测试",
+          "new_value": "新增 test_buffer_time_semantics 和 test_combined_advantage_uses_gamma_reach_init",
+          "reason": "把时间语义和算法口径变成显式回归约束"
+        }
+      ],
+      "result": {
+        "status": "P1 全部完成",
+        "test_results": {
+          "test_ecfppo.py": "15/15 passed",
+          "test_train_ecfppo.py": "12/12 passed"
+        },
+        "key_findings": [
+          "rollout / bootstrap / done_for_gae 的时间语义现已在代码中显式说明，P1 的时序歧义已清除。",
+          "combined advantage 使用 gamma_reach_init 经 JAX 参考训练循环确认属设计行为，而非误实现。",
+          "Plan 1/2 的 success/energy 相关结论已统一降级为“趋势参考”，避免继续被当作严格可比的实验结论。",
+          "Step 17 的 P1 问题已全部关闭，后续只剩 P2 文档与旧假设清理工作。"
+        ]
+      }
+    },
+    {
+      "plan_id": "7",
+      "plan_name": "P2 修复：文档术语收敛与旧架构假设清理",
+      "date": "2026-06-04",
+      "background": "在 P0/P1 修复完成后，剩余风险已主要转移到文档和测试层：README、plan.json、debug_records.json 里仍混杂“已对齐 JAX”“已验证正确”“2x256+tanh”等过时或过强表述，tests/test_ecfppo_actor_critic.py 也仍硬编码早期网络结构。若不清理，后续 review 和实验结论会继续被历史表述污染。",
+      "changes": [
+        {
+          "file": "README.md",
+          "item": "项目状态和术语",
+          "old_value": "“JAX 对齐”与“当前默认训练配置”之间的边界不够清晰",
+          "new_value": "明确写成“基于 JAX 参考实现、适配 Go2 任务的 PyTorch 移植版”，并说明当前默认训练配置为 4×512+elu",
+          "reason": "避免把当前项目误解成未经偏离的 JAX 原样复刻版"
+        },
+        {
+          "file": "tests/test_ecfppo_actor_critic.py",
+          "item": "test_network_structure",
+          "old_value": "硬编码 2层×256 + tanh 的旧结构假设",
+          "new_value": "改为验证当前参数化结构（3 个 Linear + 2 个 ELU 的默认实例）",
+          "reason": "让测试反映当前实现，而不是历史版本"
+        },
+        {
+          "file": "doc/plan/AchievePlan/plan.json",
+          "item": "Step 17 completed_work",
+          "old_value": "仅记录 P0/P1 进展",
+          "new_value": "补充 P2 收尾记录，明确 Step 17 全部完成",
+          "reason": "让计划文件与真实进度一致"
+        },
+        {
+          "file": "doc/plan/DebugPlan/debug_records.json",
+          "item": "P2 文档/测试清理记录",
+          "old_value": "缺少单独的 P2 收尾记录",
+          "new_value": "新增 plan_id=7，记录术语收敛和旧架构假设清理",
+          "reason": "让调试记录闭环，避免只记录代码修复不记录结论修复"
+        }
+      ],
+      "result": {
+        "status": "P2 全部完成",
+        "test_results": {
+          "test_ecfppo_actor_critic.py": "12/12 passed"
+        },
+        "key_findings": [
+          "当前项目的准确定位应是“基于 JAX 参考实现的 Go2 任务 PyTorch 移植版”，不是“未偏离的 JAX 原样实现”。",
+          "默认训练配置的真实状态已经稳定在 4×512+elu，旧的 2x256+tanh 假设只应保留为历史记录。",
+          "文档、测试和调试记录三者现在对当前实现状态的描述已基本收敛。",
+          "Step 17 的 P0、P1、P2 已全部关闭，后续工作应回到新的训练实验和效果验证。"
+        ]
+      }
+    },
+    {
+      "plan_id": "8",
+      "plan_name": "Step 18 blocker 修复：分层环境配置分层与最小复验训练重启",
+      "date": "2026-06-04",
+      "background": "Step 17 完成后，首次按 Step 18.1 启动 EC-EFPPO 最小复验训练时，训练在环境初始化阶段直接失败，没有进入 rollout。该问题说明实现层仍残留新的配置分层错误，必须先修复后才能继续做训练复验。",
+      "changes": [
+        {
+          "file": "legged_gym_go2/legged_gym/envs/go2/hierarchical_go2_env.py",
+          "item": "_build_base_env_cfg / _create_base_env",
+          "old_value": "直接将 GO2HighLevelCfg 传入 task_registry.make_env(name=\"go2\")，高层 env.num_actions=3 / num_observations=41 污染底层 locomotion 环境",
+          "new_value": "以注册的 go2 底层配置为基底构造 base_env_cfg，只对白名单共享字段做覆盖，保留底层 12 动作 / 45 观测维度",
+          "reason": "恢复高层导航配置与底层 locomotion 配置的正确分层，防止底层 DOF/PD 初始化崩溃"
+        },
+        {
+          "file": "tests/test_energy_state.py",
+          "item": "test_hierarchical_base_env_cfg_keeps_low_level_dims",
+          "old_value": "缺少针对高层配置泄漏到底层 GO2 环境的回归测试",
+          "new_value": "新增回归测试，显式断言底层配置保持 12 动作 / 45 观测，而高层配置仍保持 3 动作 / 41 观测",
+          "reason": "防止未来再次把高层 wrapper 配置错误传到底层模拟环境"
+        }
+      ],
+      "result": {
+        "status": "blocker 已修复，最小复验训练重新启动",
+        "root_cause": "HierarchicalGO2Env 在创建底层 GO2 环境时错误复用了高层 GO2HighLevelCfg，导致底层动作/观测维度被导航配置污染。",
+        "error_signature": "legged_robot.py::_init_buffers -> self.p_gains[i] = self.cfg.control.stiffness[dof_name] -> IndexError: index 3 is out of bounds for dimension 0 with size 3",
+        "test_results": {
+          "test_energy_state.py": "12/12 passed",
+          "py_compile hierarchical_go2_env.py": "passed"
+        },
+        "revalidation_run": {
+          "command": "env LD_LIBRARY_PATH=/pub/data/caohy/miniconda/envs/hdmcr/lib:$LD_LIBRARY_PATH conda run -n hdmcr python legged_gym/scripts/train_ecfppo.py --headless --num_envs 1024 --max_iterations 120 --seed 1 --run_name step18_min_reval_seed1",
+          "log_dir": "/home/caohy/repositories/HDMCRA/HDMCRA/legged_gym_go2/logs/ecfppo_go2/20260604-105543",
+          "early_metrics": [
+            "iter 00001 | success 0.019 | cost 39.0 | energy 323.1",
+            "iter 00002 | success 0.018 | cost 51.1 | energy 408.0",
+            "iter 00003 | success 0.017 | cost 49.7 | energy 361.0",
+            "iter 00004 | success 0.025 | cost 51.9 | energy 364.7"
+          ]
+        },
+        "key_findings": [
+          "P0/P1 修复完成后，Step 18 暴露出的第一个真实运行 blocker 不是训练超参数问题，而是分层环境配置边界错误。",
+          "修复后训练已越过原来的 GO2 初始化崩溃点，说明 blocker 已被真正解除。",
+          "后续应继续完成 Step 18.1 最小复验训练，并按 Step 18.2/18.3 评估曲线健康性和策略行为。"
+        ]
+      }
+    },
+    {
+      "plan_id": "9",
+      "plan_name": "Step 18.2 最小复验训练健康性判断（120 轮）",
+      "date": "2026-06-04",
+      "background": "在 plan_id 8 修复分层环境配置 blocker 后，EC-EFPPO 的第一轮最小复验训练以 1024 env / 120 iterations / seed=1 完整跑通。本记录用于冻结对该短程训练的健康性判断，区分“实现/数值稳定性是否恢复”与“策略效果是否已达标”。",
+      "changes": [
+        {
+          "file": "legged_gym_go2/logs/ecfppo_go2/20260604-105543/training.log",
+          "item": "120 轮 EC-EFPPO 最小复验训练",
+          "old_value": "修复前训练在环境初始化阶段即因高层/底层配置污染崩溃，无法进入 rollout",
+          "new_value": "修复后完整跑通 120 轮，产出 training.log、model_100.pt、model_final.pt",
+          "reason": "验证 Step 17 修复后的训练链路已恢复可运行且可观测"
+        }
+      ],
+      "result": {
+        "status": "数值稳定性基本通过，短程效果未通过",
+        "run_config": {
+          "command": "env LD_LIBRARY_PATH=/pub/data/caohy/miniconda/envs/hdmcr/lib:$LD_LIBRARY_PATH conda run -n hdmcr python legged_gym/scripts/train_ecfppo.py --headless --num_envs 1024 --max_iterations 120 --seed 1 --run_name step18_min_reval_seed1",
+          "log_dir": "/home/caohy/repositories/HDMCRA/HDMCRA/legged_gym_go2/logs/ecfppo_go2/20260604-105543",
+          "artifacts": [
+            "training.log",
+            "model_100.pt",
+            "model_final.pt"
+          ]
+        },
+        "metrics_summary": {
+          "success_rate": {
+            "first": 0.019,
+            "peak": 0.067,
+            "final": 0.027,
+            "mean": 0.0326,
+            "segment_means": {
+              "1-20": 0.0178,
+              "21-40": 0.0372,
+              "41-60": 0.0296,
+              "61-80": 0.0373,
+              "81-100": 0.0384,
+              "101-120": 0.0357
+            }
+          },
+          "energy_loss": {
+            "first": 600.81527,
+            "final": 7.23129,
+            "mean": 101.6224,
+            "segment_means": {
+              "1-20": 249.7862,
+              "21-40": 125.482,
+              "41-60": 80.0023,
+              "61-80": 52.6859,
+              "81-100": 52.983,
+              "101-120": 48.795
+            }
+          },
+          "reach_loss": {
+            "first": 96779.71123,
+            "final": 31562.76775,
+            "mean": 11691.1083,
+            "segment_means": {
+              "1-20": 55033.5033,
+              "21-40": 3530.47,
+              "41-60": 3038.4237,
+              "61-80": 2430.3506,
+              "81-100": 2497.1555,
+              "101-120": 3616.7465
+            }
+          }
+        },
+        "key_findings": [
+          "训练链路已恢复健康：120 轮完整跑通，无 NaN、无中途崩溃、无旧版 early-collapse 形态。",
+          "energy_loss 与 reach_loss 都从极高初值快速下降并进入平台，说明 Step 17 的实现/时序修复已经真正改善训练数值稳定性。",
+          "success_rate 不是零学习：从 1-20 轮均值 1.78% 抬升到中后段约 3.6%~3.8% 平台，并出现 6.7% 峰值。",
+          "但短程训练效果仍然偏弱：120 轮内 success_rate 长期停留在低个位数百分比，显著弱于基线 PPO 的历史早期表现。",
+          "iter 120 出现 reach_loss 单点反弹到 31562.77，同时 energy_loss 掉到 7.23，属于需要后续复验确认的异常尾点。"
+        ],
+        "judgement": {
+          "health": "PASS_WITH_CAVEAT",
+          "effectiveness": "FAIL",
+          "can_start_long_run": false,
+          "recommended_next_step": "优先做 Step 18.3 行为级 checkpoint 抽样评估，以及 Step 18.4 baseline 短程对照；暂不建议直接放大训练预算或进入大规模调参。"
+        }
+      }
+    },
+    {
+      "plan_id": "10",
+      "plan_name": "Step 18.3 行为级抽样评估",
+      "date": "2026-06-04",
+      "background": "Step 18.2 的训练日志显示数值稳定性基本通过（loss 下降、无 NaN），但 success_rate 仅 3%-4%。为区分"训练曲线正常但策略行为异常"和"策略行为合理但效果不足"，对 model_100.pt 和 model_final.pt 进行行为级评估。",
+      "eval_script": "legged_gym_go2/legged_gym/scripts/eval_ecfppo.py",
+      "checkpoints_evaluated": [
+        {
+          "path": "legged_gym_go2/logs/ecfppo_go2/20260604-105543/model_100.pt",
+          "iteration": 100,
+          "training_success_rate": 0.032
+        },
+        {
+          "path": "legged_gym_go2/logs/ecfppo_go2/20260604-105543/model_final.pt",
+          "iteration": 120,
+          "training_success_rate": 0.027
+        }
+      ],
+      "eval_config": {
+        "num_trajs": 10,
+        "max_steps": 200,
+        "spawn_points": "[(-5,5), (-5,5), (5,-5), (5,5)] x 多次",
+        "deterministic": true
+      },
+      "result": {
+        "model_100": {
+          "success_rate": 0.0,
+          "reached_goal_rate": 0.0,
+          "constraint_violation_rate": 0.7,
+          "avg_energy_consumed": 676.5,
+          "avg_final_step": 96.6,
+          "constraint_violation_steps": [21, 49, 195, 18, 19, 14, 18]
+        },
+        "model_final": {
+          "success_rate": 0.0,
+          "reached_goal_rate": 0.0,
+          "constraint_violation_rate": 0.7,
+          "avg_energy_consumed": 463.1,
+          "avg_final_step": 96.7,
+          "constraint_violation_steps": [23, 24, 27, 14, 19, 20, 102]
+        },
+        "status": "FAIL - 策略行为严重异常",
+        "key_findings": [
+          "两个 checkpoint 的行为评估结果完全一致：0% 成功率，0% 到达目标率，70% 约束违反率。",
+          "约束违反发生在极早期（step 14-27），说明策略没有在学习避障，而是在启动后立即撞向障碍物。",
+          "所有 trajectory 的 final_energy 都到达最小值 -400，说明能量预算被完全耗尽。",
+          "训练日志中的 3%-4% success_rate 与行为评估的 0% 成功率存在差异，可能原因：(1) 训练时使用随机动作采样，评估时使用确定性推理；(2) 训练时的 success 统计可能受统计口径残余问题影响；(3) 训练环境和评估环境的随机种子不同。",
+          "策略行为表明 EC-EFPPO 的三路优势信号可能存在问题：actor 主要被 energy 信号驱动（因为 energy 优势量级远大于 reach 优势），导致策略只关注降低能耗而忽视到达目标和避障。",
+          "这不是"效果不足"的问题，而是"策略根本没有在做正确的事"的问题。"
+        ],
+        "judgement": {
+          "behavior": "FAIL",
+          "root_cause_hypothesis": "三路优势信号不平衡 + earliest reach index 信号质量问题",
+          "can_continue_tuning": false,
+          "recommended_next_step": "暂停训练实验，回到算法层面排查三路优势的量级平衡问题和 earliest reach index 的信号质量。"
+        }
       }
     }
   ]
