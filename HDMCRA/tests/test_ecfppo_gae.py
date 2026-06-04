@@ -24,6 +24,7 @@ def make_test_data(T=10, nh=4, seed=42):
 
 
 def reference_calculate_indexs3(gamma, reward, energy, T_hs, last_value, last_value_reach):
+    """Reference implementation with corrected energy indexing (energy_idx = T - ii)."""
     T, nh = reward.shape
     Vs_row = torch.full((T, nh), float('inf'), dtype=reward.dtype)
     Vhs_row = torch.full((T, nh), float('inf'), dtype=reward.dtype)
@@ -35,8 +36,10 @@ def reference_calculate_indexs3(gamma, reward, energy, T_hs, last_value, last_va
         Vs_row[ii] = 0.0
         Vhs_row = Vhs_row.clone()
         Vhs_row[ii] = T_hs[ii]
-        V_total = torch.maximum(Vs_row - energy[T - ii - 1], Vhs_row).flip(0)
-        V_next = torch.maximum((gamma ** ii) * last_value + V_total[-1] - energy[T - ii - 1], last_value_reach)
+        # 修复：使用 energy[T - ii] 而非 energy[T - ii - 1]
+        energy_idx = T - ii
+        V_total = torch.maximum(Vs_row - energy[energy_idx], Vhs_row).flip(0)
+        V_next = torch.maximum((gamma ** ii) * last_value + V_total[-1] - energy[energy_idx], last_value_reach)
         V_total_1 = torch.cat([V_total, V_next.unsqueeze(0)], dim=0)
         index = torch.argmin(V_total_1, dim=0)
         done[index, torch.arange(nh)] = 1.0

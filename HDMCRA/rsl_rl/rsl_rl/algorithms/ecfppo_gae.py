@@ -39,7 +39,7 @@ def calculate_indexs3(
         Vhs_row = Vhs_row.clone()
         Vhs_row[ii] = T_hs[ii]
 
-        energy_idx = T - ii - 1
+        energy_idx = T - ii
         V_total = torch.maximum(Vs_row - energy[energy_idx], Vhs_row).flip(0)
         V_next = torch.maximum(
             (gamma ** ii) * last_value + V_total[-1] - energy[energy_idx],

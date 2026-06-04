@@ -708,6 +708,46 @@
           "recommended_next_step": "暂停训练实验，回到算法层面排查三路优势的量级平衡问题和 earliest reach index 的信号质量。"
         }
       }
+    },
+    {
+      "plan_id": "11",
+      "plan_name": "calculate_indexs3 energy 索引 off-by-one 修复",
+      "date": "2026-06-04",
+      "background": "Step 18.3 行为级评估显示策略完全失败（0% 成功率，70% 约束违反）。诊断脚本发现 done 矩阵几乎全部为 1.0（mean=0.995），且三路优势量级严重不平衡（Reach 是 Energy 的 43.9 倍）。通过严格对拍测试确认 calculate_indexs3 中存在 energy 索引 off-by-one 错误。",
+      "root_cause": "PyTorch 版本使用 energy[T - ii - 1]，而 JAX 参考实现使用 energy[-ii-1, :]（等价于 energy[T - ii, :]）。当 ii=0 时，PyTorch 访问 energy[T-1]，JAX 访问 energy[T]，导致索引差 1。",
+      "changes": [
+        {
+          "file": "rsl_rl/rsl_rl/algorithms/ecfppo_gae.py",
+          "item": "calculate_indexs3 energy_idx",
+          "old_value": "energy_idx = T - ii - 1",
+          "new_value": "energy_idx = T - ii",
+          "reason": "对齐 JAX 参考实现的 energy[-ii-1, :] 索引语义"
+        },
+        {
+          "file": "tests/test_ecfppo_gae.py",
+          "item": "reference_calculate_indexs3",
+          "old_value": "energy[T - ii - 1]",
+          "new_value": "energy[T - ii]",
+          "reason": "同步更新参考实现以匹配修复"
+        }
+      ],
+      "verification": {
+        "alignment_test": "done 矩阵 max diff = 0.000000（修复前为 1.000000）",
+        "existing_tests": {
+          "test_ecfppo_gae.py": "11/11 passed",
+          "test_ecfppo.py": "15/15 passed",
+          "test_train_ecfppo.py": "12/12 passed"
+        }
+      },
+      "result": {
+        "status": "Bug 已修复并通过验证",
+        "key_findings": [
+          "energy 索引 off-by-one 错误是导致 done 矩阵异常的根本原因。",
+          "修复后 done 矩阵与 JAX 参考实现完全一致。",
+          "这是 EC-EFPPO 训练失败的核心原因之一：错误的 done 矩阵导致 GAE 计算中的回报传播被错误截断。",
+          "下一步需要重新运行训练实验，验证修复后策略行为是否改善。"
+        ]
+      }
     }
   ]
 }

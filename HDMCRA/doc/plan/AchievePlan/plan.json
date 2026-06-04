@@ -497,6 +497,150 @@
       ],
       "completed": false,
       "completed_work": "[2026-06-04] Step 18.1 阶段进展：修复首轮最小复验训练 blocker 并重新启动训练。\n\n【新发现的 blocker】\n1. 在首次启动 Step 18 最小复验训练时，训练没有进入 rollout，而是在底层 GO2 环境初始化阶段崩溃。\n2. 根因是 HierarchicalGO2Env._create_base_env() 直接把 GO2HighLevelCfg 传给底层 go2 环境，导致高层导航配置中的 env.num_actions=3 / num_observations=41 污染了底层 locomotion 环境本应使用的 12 维关节动作配置。\n3. 具体报错表现为 legged_robot.py 初始化 p_gains/d_gains 时，底层环境按 3 维动作分配张量，却按 12 个 DOF 写入，触发 index out of bounds。\n\n【本轮修复】\n1. 修改 legged_gym_go2/legged_gym/envs/go2/hierarchical_go2_env.py：新增 _build_base_env_cfg()，改为以注册的底层 go2 配置为基底构造 base_env_cfg。\n2. 只对白名单共享字段做覆盖：seed、env.num_envs、terrain、commands、control、domain_rand、asset、rewards、rewards_ext、sim。\n3. 明确禁止高层导航专用的 env.num_actions=3 和 env.num_observations=41 继续泄漏到底层 GO2 locomotion 环境。\n4. 在 tests/test_energy_state.py 中新增 test_hierarchical_base_env_cfg_keeps_low_level_dims，回归约束底层配置维度保持 12 动作 / 45 观测，而高层配置仍保持 3 动作 / 41 观测。\n\n【验证结果】\n- conda run -n hdmcr python tests/test_energy_state.py -> 12/12 passed\n- python -m py_compile legged_gym_go2/legged_gym/envs/go2/hierarchical_go2_env.py -> passed\n- Step 18 最小复验训练已重新启动并越过原初始化崩溃点\n- 最新训练日志（logs/ecfppo_go2/20260604-105543/training.log）已写入前 4 轮指标：\n  iter 00001 success=0.019 energy=323.1\n  iter 00002 success=0.018 energy=408.0\n  iter 00003 success=0.017 energy=361.0\n  iter 00004 success=0.025 energy=364.7\n\n【阶段结论】\n- Step 18 的首个训练 blocker 已确认并修复。\n- 当前训练已真正开始进入 rollout 和参数更新阶段，后续可以继续按 18.1/18.2 收集最小复验训练结果。\n\n[2026-06-04] Step 18.2 完成：第一轮最小复验训练（120 轮）健康性判断。\n\n【实验产物】\n- 运行目录：legged_gym_go2/logs/ecfppo_go2/20260604-105543\n- checkpoint：model_100.pt, model_final.pt\n- 日志：training.log\n\n【关键统计】\n1. 120 轮完整跑通，无 NaN、无中途崩溃、无 success/energy 指标口径异常。\n2. success_rate: 首轮 0.019，峰值 0.067，最终 0.027，全程均值 0.0326。\n3. 分段 success_rate 均值：\n   - 1-20: 0.0178\n   - 21-40: 0.0372\n   - 41-60: 0.0296\n   - 61-80: 0.0373\n   - 81-100: 0.0384\n   - 101-120: 0.0357\n4. energy_loss: 600.8 -> 约 50 左右平台，1-20 均值 249.8，61-80 均值 52.7，101-120 均值 48.8。\n5. reach_loss: 约 9.8e4 -> 约 2e3 平台，1-20 均值 5.50e4，61-80 均值 2430，81-100 均值 2497。\n6. 末轮出现单点异常：iter 120 的 energy_loss=7.23、reach_loss=31562.77，明显偏离前几轮平台，但没有导致训练整体崩溃。需要后续复验确认这是尾轮统计抖动还是仍有残余时序/样本问题。\n\n【18.2 健康性判断】\n- 通过项：\n  1. 实现级 blocker 已解除，训练链路可完整跑通。\n  2. 关键 loss 曲线整体稳定且显著下降，没有复现旧版的早期爆炸后永久坍缩。\n  3. success_rate 从最早期约 1.8% 抬升到中后段约 3.5%~3.8% 平台，说明策略并非完全不学习。\n- 未通过项：\n  1. 短程训练效果仍明显偏弱，120 轮内 success_rate 长期停留在低个位数百分比，远低于历史基线 PPO 在相近早期训练阶段的表现。\n  2. success_rate 没有形成持续上升趋势，而是在 3%~4% 平台附近震荡。\n  3. 尾轮 reach_loss 单点反弹到 3.16e4，说明训练虽然总体稳定，但仍存在需要继续观察的异常尖峰。\n\n【阶段结论】\n- Step 18.1 已完成：第一轮最小复验训练完整跑通。\n- Step 18.2 已完成：当前训练健康性可判定为“数值/实现层面基本健康，但短程效果不足，不满足直接进入长程训练/大规模调参的条件”。\n- 下一步应优先进入 Step 18.3/18.4：对 model_100.pt 和 model_final.pt 做行为级抽样评估，并补 baseline 短程对照，而不是直接扩大训练预算。"
+    },
+    {
+      "step_id": 18,
+      "step_name": "修复后训练复验与基线对照",
+      "priority": "P0",
+      "bug_description": "Step 17 已完成实现层修复，但当前仍缺少修复后训练行为是否可信的动态证据。",
+      "sub_tasks": {
+        "18.1": {
+          "name": "最小复验训练",
+          "status": true,
+          "description": "运行一轮短程 EC-EFPPO 复验训练（120轮），验证训练链路是否恢复"
+        },
+        "18.2": {
+          "name": "指标健康性检查",
+          "status": true,
+          "description": "检查 loss 曲线、success_rate 是否满足基本健康性"
+        },
+        "18.3": {
+          "name": "行为级抽样评估",
+          "status": true,
+          "description": "对 checkpoint 进行行为级评估，确认策略是否在做正确的事"
+        },
+        "18.3.1": {
+          "name": "calculate_indexs3 bug 修复",
+          "status": true,
+          "description": "修复 energy 索引 off-by-one 错误"
+        },
+        "18.3.2": {
+          "name": "三路优势量级诊断",
+          "status": true,
+          "description": "诊断三路优势量级分布，发现 Reach 是 Energy 的 43.9 倍"
+        },
+        "18.4": {
+          "name": "基线短程对照",
+          "status": false,
+          "description": "跑一轮基线 PPO 短程对照实验"
+        },
+        "18.5": {
+          "name": "多种子复验",
+          "status": false,
+          "description": "追加 2-3 个随机种子的短程重复实验"
+        },
+        "18.6": {
+          "name": "判定标准冻结",
+          "status": false,
+          "description": "明确通过/不通过的标准"
+        },
+        "18.7": {
+          "name": "历史结论替换",
+          "status": false,
+          "description": "用新数据替换受旧 bug 污染的结论"
+        },
+        "18.8": {
+          "name": "输出物整理",
+          "status": false,
+          "description": "整理实验命令、日志、checkpoint、评估结论"
+        }
+      },
+      "work_goal": "在完成实现级修复后，用最小但可信的训练与评估闭环验证当前项目是否已经具备继续做长程训练和调参的条件。",
+      "work_focus": "先做短程复验和行为级评估，再做基线对照和多种子复验。",
+      "modified_files": [
+        "doc/plan/AchievePlan/plan.json",
+        "doc/plan/DebugPlan/debug_records.json"
+      ],
+      "expected_outputs": [
+        "一轮 EC-EFPPO 修复后最小复验训练及其日志/ckpt",
+        "一轮同口径 baseline 短程对照结果",
+        "至少一次 checkpoint 抽样行为评估结论",
+        "明确的通过/不通过判定"
+      ],
+      "completed": false,
+      "findings": {
+        "bugs_fixed": [
+          {
+            "id": "B7",
+            "title": "calculate_indexs3 energy 索引 off-by-one",
+            "severity": "P0",
+            "status": "fixed",
+            "file": "rsl_rl/rsl_rl/algorithms/ecfppo_gae.py",
+            "description": "PyTorch 使用 energy[T - ii - 1]，JAX 使用 energy[-ii-1]（等价于 energy[T - ii]），导致索引差 1",
+            "fix": "energy_idx = T - ii - 1 改为 energy_idx = T - ii",
+            "verification": "对拍测试 done 矩阵 max diff = 0.0，所有单元测试通过"
+          }
+        ],
+        "issues_open": [
+          {
+            "id": "I1",
+            "title": "三路优势量级严重不平衡",
+            "severity": "P0",
+            "status": "open",
+            "description": "Reach 优势是 Energy 优势的 43.9 倍，Combined advantage 完全被 Reach 信号驱动",
+            "impact": "Energy 优化信号被淹没，策略无法学习能耗约束",
+            "next_step": "需要调整超参数或重新设计优势组合方式"
+          },
+          {
+            "id": "I2",
+            "title": "策略行为完全失败",
+            "severity": "P0",
+            "status": "open",
+            "description": "0% 成功率，70% 约束违反率，能量在 3-4 步内耗尽",
+            "impact": "策略没有在做正确的事，训练完全无效",
+            "next_step": "需要重新训练验证修复效果，或考虑简化算法"
+          }
+        ],
+        "diagnostics": {
+          "training_metrics": {
+            "success_rate": {
+              "first": 0.019,
+              "peak": 0.067,
+              "final": 0.027,
+              "mean": 0.0326
+            },
+            "energy_loss": {
+              "first": 600.8,
+              "final": 7.23,
+              "mean": 101.6
+            },
+            "reach_loss": {
+              "first": 96780,
+              "final": 31563,
+              "mean": 11691
+            }
+          },
+          "behavior_eval": {
+            "model_100": {
+              "success": 0,
+              "reached_goal": 0,
+              "constraint_violation": 0.7
+            },
+            "model_final": {
+              "success": 0,
+              "reached_goal": 0,
+              "constraint_violation": 0.7
+            }
+          },
+          "advantage_diagnostics": {
+            "reach_abs_mean": 58.692,
+            "energy_abs_mean": 1.337,
+            "combined_abs_mean": 45.053,
+            "reach_to_energy_ratio": 43.9
+          }
+        }
+      },
+      "completed_work": "[2026-06-04] Step 18.1-18.3 完成，18.3.1 bug 修复完成。\n\n18.1 最小复验训练：120 轮训练完整跑通，产出 model_100.pt, model_final.pt\n18.2 指标健康性检查：数值稳定性基本通过，但短程效果未通过\n18.3 行为级抽样评估：0% 成功率，70% 约束违反率，策略行为完全失败\n18.3.1 calculate_indexs3 bug 修复：energy 索引 off-by-one 错误已修复\n18.3.2 三路优势量级诊断：Reach 优势是 Energy 的 43.9 倍\n\n下一步：18.4 基线短程对照 或 用修复后代码重新训练"
     }
   ]
 }
