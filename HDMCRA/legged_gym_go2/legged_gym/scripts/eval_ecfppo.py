@@ -164,6 +164,13 @@ def build_env_and_policy(eval_args: argparse.Namespace):
 
     env = create_env(env_cfg, train_cfg, sim_args, device)
 
+    # 加载归一化统计量（如果存在）
+    obs_rms_state = checkpoint.get("obs_rms_state", {})
+    if obs_rms_state and hasattr(env.env, 'high_level_env'):
+        env.env.high_level_env.set_obs_rms_state(obs_rms_state)
+        env.env.high_level_env.set_training(False)  # 评估模式，不更新统计量
+        print(f"Loaded observation normalization stats from checkpoint")
+
     # 从 checkpoint 推断网络结构
     state_dict = checkpoint.get("actor_critic", {})
     # 检查是否是三网络结构（EC_EFPPO_ActorCritic）

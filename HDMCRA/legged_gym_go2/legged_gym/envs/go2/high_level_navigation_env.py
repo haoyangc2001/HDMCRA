@@ -4,6 +4,7 @@ import math
 from legged_gym.envs.go2.go2_env import GO2Robot
 from legged_gym.utils.math import quat_apply
 from legged_gym.utils.helpers import class_to_dict
+from rsl_rl.utils.running_mean_std import RunningMeanStd
 
 
 class HighLevelNavigationEnv:
@@ -76,6 +77,19 @@ class HighLevelNavigationEnv:
         self.energy_consumption_scale = getattr(cfg, 'energy_consumption_scale', 8.0)
         self.energy = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.energy_consumption = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+
+        # 观测归一化（Running Mean/Std）
+        self.normalize_observations = getattr(cfg, 'normalize_observations', True)
+        self.obs_clip_range = getattr(cfg, 'obs_clip_range', 10.0)
+        if self.normalize_observations:
+            self.obs_rms = RunningMeanStd(
+                shape=(self.num_high_level_obs,),
+                device=self.device
+            )
+            self.training = True  # 是否在训练模式（更新统计量）
+        else:
+            self.obs_rms = None
+            self.training = False
 
     def reset(self):
         """
@@ -261,8 +275,18 @@ class HighLevelNavigationEnv:
             lidar_start = target_start + (self.target_lidar_num_bins if self.target_lidar_num_bins > 0 else 0)
             self.high_level_obs_buf[:, lidar_start:lidar_start + self.lidar_num_bins] = lidar_buf
 
-        # Append raw energy to the end of observations（与 JAX 参考一致，不做归一化）
+        # Append raw energy to the end of observations
         self.high_level_obs_buf[:, -1] = self.energy
+
+        # 应用观测归一化
+        if self.normalize_observations and self.obs_rms is not None:
+            # 在训练模式下更新统计量
+            if self.training:
+                self.obs_rms.update(self.high_level_obs_buf)
+            # 归一化观测
+            self.high_level_obs_buf = self.obs_rms.normalize(
+                self.high_level_obs_buf, clip_range=self.obs_clip_range
+            )
 
     def _compute_g_function(self, reach_metric):
         """
@@ -329,6 +353,21 @@ class HighLevelNavigationEnv:
         """返回底层观测"""
         return self.base_env.get_observations()
 
+    def set_training(self, training: bool) -> None:
+        """设置训练模式（控制是否更新归一化统计量）"""
+        self.training = training
+
+    def get_obs_rms_state(self) -> dict:
+        """获取归一化统计量状态（用于保存）"""
+        if self.obs_rms is not None:
+            return self.obs_rms.state_dict()
+        return {}
+
+    def set_obs_rms_state(self, state: dict) -> None:
+        """恢复归一化统计量状态（用于加载）"""
+        if self.obs_rms is not None and state:
+            self.obs_rms.load_state_dict(state)
+
     def _compute_boundary_lidar(self, rel_pos_xy, heading_cos, heading_sin):
         if not self.use_manual_lidar or self.lidar_num_bins <= 0 or self._lidar_dir_body is None:
             return None
@@ -393,3 +432,7 @@ class HighLevelNavigationConfig:
         self.min_energy = -400.0       # 最低能量预算
         self.max_energy = 800.0        # 最高能量预算
         self.energy_consumption_scale = 8.0  # 能量消耗缩放系数
+
+        # 观测归一化参数
+        self.normalize_observations = True   # 是否启用观测归一化
+        self.obs_clip_range = 10.0           # 归一化后裁剪范围 [-10, 10]

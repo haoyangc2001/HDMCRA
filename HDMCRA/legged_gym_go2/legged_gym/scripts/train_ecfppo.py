@@ -190,6 +190,10 @@ def train_ecfppo(args) -> None:
             alg.energy_optimizer.load_state_dict(ckpt["energy_optimizer"])
         if "reach_optimizer" in ckpt:
             alg.reach_optimizer.load_state_dict(ckpt["reach_optimizer"])
+        # 恢复归一化统计量
+        if "obs_rms_state" in ckpt and hasattr(env.env, 'high_level_env'):
+            env.env.high_level_env.set_obs_rms_state(ckpt["obs_rms_state"])
+            print(f"Loaded observation normalization stats from checkpoint")
         start_iteration = ckpt.get("iteration", 0)
     else:
         start_iteration = 0
@@ -319,6 +323,8 @@ def train_ecfppo(args) -> None:
         # ---- 保存 checkpoint ----
         if (iteration + 1) % save_interval == 0:
             save_path = os.path.join(log_dir, f"model_{iteration + 1}.pt")
+            # 获取归一化统计量状态
+            obs_rms_state = env.env.high_level_env.get_obs_rms_state() if hasattr(env.env, 'high_level_env') else {}
             torch.save(
                 {
                     "actor_critic": actor_critic.state_dict(),
@@ -330,6 +336,7 @@ def train_ecfppo(args) -> None:
                     "execution_cost": execution_cost,
                     "avg_energy_consumption": avg_energy,
                     "low_level_model_path": train_cfg.runner.low_level_model_path,
+                    "obs_rms_state": obs_rms_state,
                 },
                 save_path,
             )
@@ -345,6 +352,7 @@ def train_ecfppo(args) -> None:
 
     # ---- 保存最终模型 ----
     final_path = os.path.join(log_dir, "model_final.pt")
+    obs_rms_state = env.env.high_level_env.get_obs_rms_state() if hasattr(env.env, 'high_level_env') else {}
     torch.save(
         {
             "actor_critic": actor_critic.state_dict(),
@@ -355,6 +363,7 @@ def train_ecfppo(args) -> None:
             "success_rate": success_rate,
             "avg_energy_consumption": avg_energy,
             "low_level_model_path": train_cfg.runner.low_level_model_path,
+            "obs_rms_state": obs_rms_state,
         },
         final_path,
     )
