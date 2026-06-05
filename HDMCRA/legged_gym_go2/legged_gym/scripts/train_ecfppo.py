@@ -160,6 +160,9 @@ def train_ecfppo(args) -> None:
     )
 
     # ---- 初始化 EC_EFPPO ----
+    # 获取 energy critic 专用的梯度裁剪值（如果配置中有的话）
+    max_grad_norm_energy = getattr(train_cfg.algorithm, 'max_grad_norm_energy', None)
+
     alg = EC_EFPPO(
         actor_critic=actor_critic,
         learning_rate=train_cfg.algorithm.learning_rate,
@@ -173,6 +176,7 @@ def train_ecfppo(args) -> None:
         value_loss_coef=train_cfg.algorithm.vf_coef,
         entropy_coef=train_cfg.algorithm.entropy_coef,
         max_grad_norm=train_cfg.algorithm.max_grad_norm,
+        max_grad_norm_energy=max_grad_norm_energy,
         anneal_entropy=train_cfg.algorithm.anneal_entropy,
         device=str(device),
     )
@@ -194,6 +198,9 @@ def train_ecfppo(args) -> None:
         if "obs_rms_state" in ckpt and hasattr(env.env, 'high_level_env'):
             env.env.high_level_env.set_obs_rms_state(ckpt["obs_rms_state"])
             print(f"Loaded observation normalization stats from checkpoint")
+        if "energy_target_rms_state" in ckpt:
+            alg.set_energy_target_rms_state(ckpt["energy_target_rms_state"])
+            print(f"Loaded energy target normalization stats from checkpoint")
         start_iteration = ckpt.get("iteration", 0)
     else:
         start_iteration = 0
@@ -284,6 +291,7 @@ def train_ecfppo(args) -> None:
             gamma_reach=gamma_reach,
             gae_lambda=train_cfg.algorithm.gae_lambda,
             gamma_reach_init=train_cfg.algorithm.gamma_reach_init,
+            energy_target_rms=alg.energy_target_rms,
         )
 
         # ---- 成功率和能量消耗 ----
@@ -325,6 +333,7 @@ def train_ecfppo(args) -> None:
             save_path = os.path.join(log_dir, f"model_{iteration + 1}.pt")
             # 获取归一化统计量状态
             obs_rms_state = env.env.high_level_env.get_obs_rms_state() if hasattr(env.env, 'high_level_env') else {}
+            energy_target_rms_state = alg.get_energy_target_rms_state()
             torch.save(
                 {
                     "actor_critic": actor_critic.state_dict(),
@@ -337,6 +346,7 @@ def train_ecfppo(args) -> None:
                     "avg_energy_consumption": avg_energy,
                     "low_level_model_path": train_cfg.runner.low_level_model_path,
                     "obs_rms_state": obs_rms_state,
+                    "energy_target_rms_state": energy_target_rms_state,
                 },
                 save_path,
             )
@@ -353,6 +363,7 @@ def train_ecfppo(args) -> None:
     # ---- 保存最终模型 ----
     final_path = os.path.join(log_dir, "model_final.pt")
     obs_rms_state = env.env.high_level_env.get_obs_rms_state() if hasattr(env.env, 'high_level_env') else {}
+    energy_target_rms_state = alg.get_energy_target_rms_state()
     torch.save(
         {
             "actor_critic": actor_critic.state_dict(),
@@ -364,6 +375,7 @@ def train_ecfppo(args) -> None:
             "avg_energy_consumption": avg_energy,
             "low_level_model_path": train_cfg.runner.low_level_model_path,
             "obs_rms_state": obs_rms_state,
+            "energy_target_rms_state": energy_target_rms_state,
         },
         final_path,
     )

@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+from rsl_rl.utils.running_mean_std import RunningMeanStd
 from rsl_rl.algorithms.ecfppo_gae import (
     calculate_indexs3,
     calculate_energy_gae,
@@ -155,6 +156,7 @@ class EC_EFPPO_Buffer:
         gamma_reach: float,
         gae_lambda: float,
         gamma_reach_init: float,
+        energy_target_rms=None,
     ) -> None:
         """
         核心优势计算。对应 JAX 版 _train 中的优势计算部分。
@@ -235,9 +237,20 @@ class EC_EFPPO_Buffer:
             gamma_reach_init, gae_lambda, g_append, V_total_append, done_for_gae
         )
 
+        # ---- 归一化 energy critic 目标值 ----
+        if energy_target_rms is not None:
+            # 更新 energy_target_rms 统计量
+            energy_target_rms.update(targets_V.reshape(-1, 1))
+            # 归一化 targets_V
+            targets_V_normalized = energy_target_rms.normalize(
+                targets_V.reshape(-1, 1), clip_range=10.0
+            ).reshape(targets_V.shape)
+        else:
+            targets_V_normalized = targets_V
+
         # ---- 存储 ----
         self.advantages_total.copy_(advantages_total)
-        self.targets_energy.copy_(targets_V)
+        self.targets_energy.copy_(targets_V_normalized)  # 存储归一化后的目标
         self.targets_reach.copy_(targets_h)
 
     def _flat_view(self) -> EC_EFPPO_Batch:
@@ -310,6 +323,7 @@ class EC_EFPPO:
         value_loss_coef: float = 0.5,
         entropy_coef: float = 0.01,
         max_grad_norm: float = 0.5,
+        max_grad_norm_energy: float = None,
         anneal_entropy: bool = False,
         device: str = "cpu",
         **kwargs,
@@ -329,6 +343,9 @@ class EC_EFPPO:
         self.value_loss_coef = value_loss_coef
         self.entropy_coef = entropy_coef
         self.max_grad_norm = max_grad_norm
+        # Energy critic 使用更严格的梯度裁剪，防止 loss 爆炸
+        # 如果未指定，默认使用 max_grad_norm 的 1/5
+        self.max_grad_norm_energy = max_grad_norm_energy if max_grad_norm_energy is not None else max_grad_norm / 5.0
         self.anneal_entropy = anneal_entropy
 
         # 三个独立优化器（对应 JAX 版三个独立 TrainState）
@@ -341,6 +358,11 @@ class EC_EFPPO:
         self.reach_optimizer = optim.Adam(
             self.actor_critic.reach_critic.parameters(), lr=learning_rate
         )
+
+        # Energy critic 目标值归一化器
+        # 用于归一化 energy critic 的目标值（累积能量消耗）
+        # 解决输入（归一化观测 [-10, 10]）与目标（原始累积消耗 [0, 2000+]）的尺度不匹配
+        self.energy_target_rms = RunningMeanStd(shape=(), device=self.device)
 
         self.buffer = None
 
@@ -464,8 +486,9 @@ class EC_EFPPO:
 
             self.energy_optimizer.zero_grad()
             energy_total_loss.backward()
+            # Energy critic 使用更严格的梯度裁剪，防止 loss 爆炸
             nn.utils.clip_grad_norm_(
-                self.actor_critic.energy_critic.parameters(), self.max_grad_norm
+                self.actor_critic.energy_critic.parameters(), self.max_grad_norm_energy
             )
             self.energy_optimizer.step()
 
@@ -548,3 +571,12 @@ class EC_EFPPO:
         if not anneal:
             return entropy_coef_init
         return entropy_coef_init * (total_updates - current_update) / total_updates
+
+    def get_energy_target_rms_state(self) -> dict:
+        """获取 energy_target_rms 状态（用于保存 checkpoint）。"""
+        return self.energy_target_rms.state_dict()
+
+    def set_energy_target_rms_state(self, state: dict) -> None:
+        """恢复 energy_target_rms 状态（用于加载 checkpoint）。"""
+        if state:
+            self.energy_target_rms.load_state_dict(state)
