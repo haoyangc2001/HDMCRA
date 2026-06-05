@@ -268,5 +268,7 @@ class GO2EC_EFPPOCfgPPO(GO2HighLevelCfgPPO):
         experiment_name = 'ecfppo_go2'
         max_iterations = 1500
         save_interval = 100
+        # 每隔 N 次迭代写入 EC-EFPPO 诊断指标；设为 0 可关闭。
+        debug_stats_interval = 10
         resume = False
         resume_path = None

@@ -187,9 +187,12 @@ def train_ecfppo(args) -> None:
         print(f"Resuming from {train_cfg.runner.resume_path}")
         ckpt = torch.load(train_cfg.runner.resume_path, map_location=device)
         actor_critic.load_state_dict(ckpt["actor_critic"])
-        # 注意：三个优化器的 state_dict 需要分别恢复
+        # 注意：三个优化器的 state_dict 需要分别恢复。旧 checkpoint 可能缺少 std optimizer state。
         if "policy_optimizer" in ckpt:
-            alg.policy_optimizer.load_state_dict(ckpt["policy_optimizer"])
+            try:
+                alg.policy_optimizer.load_state_dict(ckpt["policy_optimizer"])
+            except ValueError as exc:
+                print(f"Warning: skipped policy optimizer state due to parameter mismatch: {exc}")
         if "energy_optimizer" in ckpt:
             alg.energy_optimizer.load_state_dict(ckpt["energy_optimizer"])
         if "reach_optimizer" in ckpt:
@@ -300,6 +303,7 @@ def train_ecfppo(args) -> None:
             alg.buffer.h_values[1:],       # [T, N] h 序列（跳过初始状态）
             energy_sequence=alg.buffer.energy,  # [T+1, N] 完整能量序列
         )
+        debug_stats = dict(getattr(alg.buffer, 'debug_stats', {}))
 
         # ---- 三路 PPO 更新 ----
         loss_dict = alg.update(
@@ -325,6 +329,23 @@ def train_ecfppo(args) -> None:
             )
             print(log_line)
             log_fp.write(log_line + "\n")
+
+            debug_interval = getattr(train_cfg.runner, 'debug_stats_interval', 0)
+            if debug_interval and (iteration + 1) % debug_interval == 0 and debug_stats:
+                std = actor_critic.std.detach().float()
+                debug_line = (
+                    f"debug {iteration + 1:05d} | "
+                    f"std_mean {std.mean().item():.4f} | std_min {std.min().item():.4f} | std_max {std.max().item():.4f} | "
+                    f"done_mean {debug_stats.get('done_for_gae_mean', float('nan')):.4f} | "
+                    f"energy_min_ratio {debug_stats.get('energy_min_ratio', float('nan')):.4f} | "
+                    f"energy_neg_ratio {debug_stats.get('energy_negative_ratio', float('nan')):.4f} | "
+                    f"v_reach [{debug_stats.get('values_reach_min', float('nan')):.3e}, {debug_stats.get('values_reach_max', float('nan')):.3e}] | "
+                    f"t_reach [{debug_stats.get('targets_reach_min', float('nan')):.3e}, {debug_stats.get('targets_reach_max', float('nan')):.3e}] | "
+                    f"adv_total_std {debug_stats.get('advantages_total_std', float('nan')):.3e}"
+                )
+                print(debug_line)
+                log_fp.write(debug_line + "\n")
+
             log_fp.flush()
             interval_start = time.time()
 

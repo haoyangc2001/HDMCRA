@@ -89,10 +89,22 @@ class EC_EFPPO_Buffer:
         self.targets_energy = torch.zeros(horizon, num_envs, device=device)
         self.targets_reach = torch.zeros(horizon, num_envs, device=device)
 
+        self.debug_stats: Dict[str, float] = {}
         self.step = 0
 
     def clear(self) -> None:
         self.step = 0
+        self.debug_stats = {}
+
+    @staticmethod
+    def _stats(prefix: str, tensor: torch.Tensor) -> Dict[str, float]:
+        values = tensor.detach().float()
+        return {
+            f"{prefix}_min": values.min().item(),
+            f"{prefix}_max": values.max().item(),
+            f"{prefix}_mean": values.mean().item(),
+            f"{prefix}_std": values.std(unbiased=False).item(),
+        }
 
     def add(
         self,
@@ -253,6 +265,21 @@ class EC_EFPPO_Buffer:
         self.targets_energy.copy_(targets_V_normalized)  # 存储归一化后的目标
         self.targets_reach.copy_(targets_h)
 
+        # 诊断统计用于定位 critic/target/advantage 量级问题。
+        self.debug_stats = {}
+        self.debug_stats.update(self._stats("values_reach", self.value_reach))
+        self.debug_stats.update(self._stats("targets_reach", self.targets_reach))
+        self.debug_stats.update(self._stats("values_energy", self.values))
+        self.debug_stats.update(self._stats("targets_energy", self.targets_energy))
+        self.debug_stats.update(self._stats("advantages_total", self.advantages_total))
+        self.debug_stats.update(self._stats("g_values", self.g_values))
+        self.debug_stats.update(self._stats("h_values", self.h_values))
+        self.debug_stats["done_for_gae_mean"] = done_for_gae.float().mean().item()
+        self.debug_stats["energy_min_ratio"] = (
+            energy_append <= energy_append.min() + 1e-6
+        ).float().mean().item()
+        self.debug_stats["energy_negative_ratio"] = (energy_append < 0).float().mean().item()
+
     def _flat_view(self) -> EC_EFPPO_Batch:
         """将 [T, N, ...] 数据展平为 [T*N, ...]。"""
         obs = self.observations[:-1].reshape(-1, self.observations.size(-1))
@@ -349,8 +376,10 @@ class EC_EFPPO:
         self.anneal_entropy = anneal_entropy
 
         # 三个独立优化器（对应 JAX 版三个独立 TrainState）
+        # policy optimizer 必须同时管理 actor MLP 和动作分布 std；否则 entropy/std 不会更新。
+        self.policy_params = list(self.actor_critic.actor.parameters()) + [self.actor_critic.std]
         self.policy_optimizer = optim.Adam(
-            self.actor_critic.actor.parameters(), lr=learning_rate
+            self.policy_params, lr=learning_rate
         )
         self.energy_optimizer = optim.Adam(
             self.actor_critic.energy_critic.parameters(), lr=learning_rate
@@ -465,9 +494,10 @@ class EC_EFPPO:
             self.policy_optimizer.zero_grad()
             actor_total_loss.backward()
             nn.utils.clip_grad_norm_(
-                self.actor_critic.actor.parameters(), self.max_grad_norm
+                self.policy_params, self.max_grad_norm
             )
             self.policy_optimizer.step()
+            self.actor_critic.std.data.clamp_(min=1e-4)
 
             # ===================== Energy Critic 更新 =====================
             # 前向传播 energy critic

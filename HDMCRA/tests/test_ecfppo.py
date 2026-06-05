@@ -241,10 +241,36 @@ def test_ecefppo_instantiation():
     policy_params = set(id(p) for p in alg.policy_optimizer.param_groups[0]['params'])
     energy_params = set(id(p) for p in alg.energy_optimizer.param_groups[0]['params'])
     reach_params = set(id(p) for p in alg.reach_optimizer.param_groups[0]['params'])
+    assert id(model.std) in policy_params, "policy optimizer 必须包含动作 std 参数"
     assert policy_params.isdisjoint(energy_params)
     assert policy_params.isdisjoint(reach_params)
     assert energy_params.isdisjoint(reach_params)
     print("[PASS] test_ecefppo_instantiation")
+
+
+def test_policy_optimizer_updates_std():
+    """P0: entropy/std 诊断要求 std 必须由 policy optimizer 实际更新。"""
+    model, _, _ = make_model_and_buffer(num_envs=4, horizon=4, obs_dim=8, act_dim=3)
+    alg = EC_EFPPO(
+        actor_critic=model,
+        learning_rate=1e-2,
+        entropy_coef=0.01,
+        device='cpu',
+    )
+
+    obs = torch.randn(16, 8)
+    old_std = model.std.detach().clone()
+
+    alg.policy_optimizer.zero_grad()
+    model.update_distribution(obs)
+    loss = -model.entropy.mean()
+    loss.backward()
+    alg.policy_optimizer.step()
+    model.std.data.clamp_(min=1e-4)
+
+    assert not torch.allclose(model.std.detach(), old_std), "std 应在 policy optimizer step 后变化"
+    assert torch.all(model.std.detach() > 0), "std 必须保持正值"
+    print("[PASS] test_policy_optimizer_updates_std")
 
 
 # ---- Test 7: EC_EFPPO act ----
@@ -462,6 +488,7 @@ if __name__ == '__main__':
         test_compute_advantages_shapes,
         test_iter_batches,
         test_ecefppo_instantiation,
+        test_policy_optimizer_updates_std,
         test_ecefppo_act,
         test_ecefppo_update,
         test_independent_gradient_flow,
