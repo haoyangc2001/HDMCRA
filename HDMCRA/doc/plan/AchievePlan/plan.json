@@ -531,7 +531,7 @@
         },
         "18.4": {
           "name": "基线短程对照",
-          "status": false,
+          "status": true,
           "description": "跑一轮基线 PPO 短程对照实验"
         },
         "18.5": {

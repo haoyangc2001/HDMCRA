@@ -1027,6 +1027,70 @@
           "success_rate_peak": "从 6.7% 提升到 24.7%（3.7 倍提升）"
         }
       }
+    },
+    {
+      "plan_id": "15",
+      "plan_name": "Step 18.4 基线 PPO 短程对照实验",
+      "date": "2026-06-05",
+      "background": "EC-EFPPO 经过多次修复后（观测归一化 + energy target 归一化），success rate 提升到 16.9%（峰值 24.7%），但与基线 PPO 的历史数据（50 轮 52%）仍有差距。为了确认环境本身没有问题，并提供同口径参照，运行基线 PPO 的短程对照实验。",
+      "experiment_config": {
+        "command": "python train_reach_avoid.py --headless --num_envs 1024 --max_iterations 50 --seed 1 --run_name baseline_ppo_50iter",
+        "log_dir": "logs/high_level_go2/20260605-095855",
+        "algorithm": "Reach-Avoid PPO（单网络 Actor-Critic）",
+        "environment": "与 EC-EFPPO 完全相同（1024 envs, seed=1）"
+      },
+      "results": {
+        "baseline_ppo": {
+          "success_rate": {
+            "mean": 0.1562,
+            "peak": 0.3370,
+            "final": 0.3370
+          },
+          "segment_means": {
+            "1-10": 0.0235,
+            "11-20": 0.0591,
+            "21-30": 0.1468,
+            "31-40": 0.2377,
+            "41-50": 0.3138
+          }
+        },
+        "ecfppo": {
+          "success_rate": {
+            "mean": 0.0591,
+            "peak": 0.2470,
+            "final": 0.1690
+          },
+          "segment_means": {
+            "1-10": 0.0275,
+            "11-20": 0.0682,
+            "21-30": 0.0867,
+            "31-40": 0.0378,
+            "41-50": 0.0754
+          }
+        },
+        "comparison": {
+          "mean_ratio": "PPO 好 164%",
+          "peak_ratio": "PPO 好 36%",
+          "final_ratio": "PPO 好 99%"
+        }
+      },
+      "key_findings": [
+        "基线 PPO 学习曲线健康：2.35% → 5.91% → 14.68% → 23.77% → 31.38%（持续上升）。",
+        "EC-EFPPO 学习曲线不稳定：2.75% → 6.82% → 8.67% → 3.78% → 7.54%（20 轮后波动下降）。",
+        "环境配置正确：基线 PPO 能达到 33.7% success rate，说明环境、观测、动作空间都没有问题。",
+        "EC-EFPPO 实现存在问题：训练不稳定，20 轮后开始波动并下降。",
+        "差距巨大：基线 PPO 最终 33.7% vs EC-EFPPO 最终 16.9%，PPO 好 99%。",
+        "问题定位：EC-EFPPO 的三路优势信号或 earliest reach index 算法可能存在根本性问题。"
+      ],
+      "conclusion": {
+        "environment_status": "正确（基线 PPO 能正常学习）",
+        "ecfppo_status": "有问题（训练不稳定，后期下降）",
+        "next_steps": [
+          "分析 EC-EFPPO 训练不稳定的根本原因",
+          "可能需要简化算法或重新设计优势信号",
+          "考虑先用单路 reach advantage 验证基本功能"
+        ]
+      }
     }
   ]
 }
