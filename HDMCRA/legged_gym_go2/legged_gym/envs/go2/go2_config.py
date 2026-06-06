@@ -247,10 +247,15 @@ class GO2EC_EFPPOCfgPPO(GO2HighLevelCfgPPO):
         clip_eps = 0.2
         # Value function loss coefficient — Plan A: 0.5 → 1.0（对齐基线）
         vf_coef = 1.0
-        # Entropy coefficient
-        entropy_coef = 0.01
+        # 初始动作噪声标准差。EC-EFPPO 使用 log_std 参数化，这里仍以 std 语义配置。
+        init_noise_std = 0.5
+        # log_std 限幅范围；[-2, 0] 对应 std 约 [0.135, 1.0]
+        log_std_min = -2.0
+        log_std_max = 0.0
+        # Entropy coefficient。降低并退火，避免持续推大探索噪声。
+        entropy_coef = 0.001
         # Whether to anneal entropy coefficient
-        anneal_entropy = False
+        anneal_entropy = True
         # Max gradient norm
         max_grad_norm = 0.5
         # Energy critic 专用梯度裁剪（更严格，防止 loss 爆炸）

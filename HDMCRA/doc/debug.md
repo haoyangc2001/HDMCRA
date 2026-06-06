@@ -13,20 +13,22 @@
 
 | ID | 状态 | 严重性 | 问题 | 相关日志/文件 | 下一步 | 验证后下一步计划 |
 |---|---|---|---|---|---|---|
-| D001 | open | P0 | 最新全量训练 success 低平台，critic loss 量级异常，entropy/std 不更新 | `legged_gym_go2/logs/ecfppo_go2/20260605-102937/training.log` | 修复 `std` optimizer，补充训练诊断指标，跑小规模训练验证 | 若 `std` 更新后 reach critic 仍发散，优先检查 reach critic 输出/target 约束、energy 饱和和 `done_for_gae` 语义 |
+| D001 | resolved | P0 | 首轮全量训练 success 低平台，critic loss 量级异常，entropy/std 不更新 | `legged_gym_go2/logs/ecfppo_go2/20260605-102937/training.log` | 已修复 `std` 未进入 policy optimizer，并补充训练诊断指标 | 已被 D002 取代：`std` 能更新后出现无界增长，需改为 `log_std` 参数化并限制探索噪声 |
+| D002 | open | P0 | `std` 可更新后无界增长，entropy 推高探索噪声，success 早期峰值后坍塌 | `legged_gym_go2/logs/ecfppo_go2/20260605-231206/training.log` | 使用 `log_std -> exp` 参数化、限制 `std` 范围、降低并退火 entropy | 修改后跑 100-200 iter 诊断训练；若噪声受控但 reach/energy 仍异常，转向 critic target、energy 饱和和 done mask 语义 |
 
 ## 训练记录索引
 
 | Run ID | 日期 | 命令/配置 | 迭代范围 | peak success | final success | 关键异常 | 结论 |
 |---|---|---|---|---|---|---|---|
 | 20260605-102937 | 2026-06-05 | `train_ecfppo.py --headless --num_envs 4096 --max_iterations 1500` | 1-1500 | 0.194 | 0.171 | `reach_loss` 到 1e20 后仍停在 1e16；`energy_loss` 到 1e7；entropy 恒定 | 训练完整但未稳定收敛，存在明确实现/设计可疑点 |
+| 20260605-231206 | 2026-06-05 | 修复 `std` optimizer 后再次训练 | 1-1387 | 0.339 | 约 0.096 | `std_mean` 从约 1.3 增至 100+；entropy 从约 4.3 增至 18+；`reach_loss` 延迟但仍到 1e19 | `std` optimizer 修复生效，但直接优化 std 会导致探索噪声失控，success 早期改善后坍塌 |
 
 ## 分析记录
 
 ### D001: 最新 EC-EFPPO 全量训练稳定性分析
 
 - 日期：2026-06-05
-- 状态：open
+- 状态：resolved
 - 严重性：P0
 - 触发原因：最新训练日志显示 success 长期低于预期，同时 value loss 量级严重异常。
 - 相关日志：`legged_gym_go2/logs/ecfppo_go2/20260605-102937/training.log`
@@ -88,11 +90,67 @@
   - 若 reach critic 仍快速进入 `1e6+`，优先给 reach critic 增加输出/target/bootstrapped value 的语义边界约束，或降低 reach critic 学习率。
   - 若 `energy=-400` 和 `done_for_gae` 仍接近全饱和，重新审查 energy 初始分布、`min_energy`、`energy_consumption_scale`、动作裁剪能耗和 earliest-index done 语义。
 
+
+### D002: std 无界增长导致探索噪声失控
+
+- 日期：2026-06-06
+- 状态：open
+- 严重性：P0
+- 触发原因：修复 `std` optimizer 后，最新训练不再表现为 entropy 恒定，但出现 `std` 和 entropy 持续增大，success 早期提升后明显坍塌。
+- 相关日志：`legged_gym_go2/logs/ecfppo_go2/20260605-231206/training.log`
+- 现象：
+  - 日志已跑到约 iter 1387。
+  - `success` 在 iter 118 左右达到峰值约 0.339，之后逐步下降，后期约 0.07-0.10。
+  - `std_mean` 从 iter 10 的约 1.31 增至 iter 150 的约 10.41，后期超过 100。
+  - `entropy` 从约 4.3 持续增至约 18.27，说明 entropy bonus 正在持续鼓励更大的动作分布方差。
+  - `reach_loss` 爆炸被延迟但没有消失：iter 77 超过 1e6，iter 405 超过 1e18，最大约 4.36e19。
+  - `done_mean` 仍接近 1，`energy_min_ratio` 仍约 0.97，说明能量下界饱和和 done mask 过密仍是后续重点。
+- 初步假设：
+  - H1：直接优化实际 `std` 不够稳健；entropy 梯度会持续推大标准差，且没有上界。
+  - H2：`entropy_coef=0.01` 对当前任务过强，持续探索奖励会压过已经学到的早期可达行为。
+  - H3：`std` 失控会放大动作裁剪和能耗饱和，从而进一步恶化 `done_for_gae` 和 reach critic bootstrap。
+  - H4：即使控制 `std`，reach critic 和 energy/done 语义仍可能存在独立问题，需要下一轮训练验证后再判断。
+- 代码链路：
+  - `EC_EFPPO_ActorCritic.update_distribution()`：根据 actor 均值和动作标准差构造 Normal 分布。
+  - `EC_EFPPO.update()`：policy loss 中包含 `- entropy_coef * entropy`，会鼓励更高 entropy。
+  - `train_ecfppo.py`：记录 `std_mean/std_min/std_max`、`entropy`、`done_mean`、`energy_min_ratio`、`v_reach_min`、`reach_loss`。
+  - `GO2EC_EFPPOCfgPPO.algorithm`：控制初始动作噪声、entropy 系数和退火。
+- 证据：
+  - 修复 D001 后，`std` 不再固定为 1，证明 optimizer 修复有效。
+  - 但最新日志中 `std_mean` 持续增至 100+，对应动作采样噪声远超动作裁剪范围，训练信号会被无意义探索主导。
+  - 常见 PPO 连续动作实现通常优化 `log_std`，再通过 `exp(log_std)` 得到正标准差；这种参数化比直接优化实际 `std` 更常见，也更容易做范围约束。
+- 结论：
+  - D001 的最小修复暴露出第二个确定问题：EC-EFPPO 不能直接无界优化实际 `std`。
+  - 当前优先级最高的修改不是继续调 critic，而是先让策略分布噪声受控，否则后续 reach/energy 诊断会被无界探索噪声污染。
+- 改动：
+  - `rsl_rl/rsl_rl/modules/actor_critic.py`：将 EC-EFPPO 动作噪声从 `std` 参数改为 `log_std` 参数，`std` 由 `exp(clamp(log_std))` 计算，保证标准差为正且有上下界。
+  - `rsl_rl/rsl_rl/modules/actor_critic.py`：增加 `clamp_log_std_()`，并在 `load_state_dict()` 中兼容旧 checkpoint 的 `std` 字段。
+  - `rsl_rl/rsl_rl/algorithms/ecfppo.py`：policy optimizer 改为管理 actor 参数和 `log_std`，policy step 后限制 `log_std` 范围。
+  - `legged_gym_go2/legged_gym/scripts/train_ecfppo.py`：从配置读取 `init_noise_std`、`log_std_min`、`log_std_max`。
+  - `legged_gym_go2/legged_gym/envs/go2/go2_config.py`：EC-EFPPO 设置 `init_noise_std=0.5`、`log_std_min=-2.0`、`log_std_max=0.0`，对应 `std` 约 `[0.135, 1.0]`；`entropy_coef` 从 0.01 降为 0.001，并启用 entropy 退火。
+  - `tests/test_ecfppo_actor_critic.py`、`tests/test_ecfppo.py`、`tests/test_train_ecfppo.py`：更新并补充 `log_std`、旧 checkpoint 兼容、optimizer 管理和配置测试。
+- 验证：
+  - 已运行 `python3 -m py_compile` 检查修改过的 Python 文件。
+  - 已运行 `conda run -n hdmcr python tests/test_ecfppo_actor_critic.py`，结果 13 passed。
+  - 已运行 `conda run -n hdmcr python tests/test_ecfppo.py`，结果 16 passed。
+  - 已运行 `conda run -n hdmcr bash -lc 'export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"; python tests/test_train_ecfppo.py'`，结果 12 passed。
+  - `tests/test_energy_consumption_scale.py` 在设置 `LD_LIBRARY_PATH` 后进入 IsaacGym/PhysX 初始化，但发生 segmentation fault，暂记录为仿真扩展层运行失败，不作为本次 Python 逻辑回归失败。
+- 后续动作：
+  - 运行 100-200 iter 小规模诊断训练，优先观察 `std_mean/std_min/std_max` 是否稳定在 `[0.135, 1.0]` 内，`entropy` 是否不再单调无界增长。
+  - 同时观察 `reach_loss` 是否仍在 100 iter 内超过 1e6，`v_reach_min` 是否快速进入极大负值。
+  - 同时观察 `energy_min_ratio` 和 `done_mean` 是否仍接近 1。
+- 验证后下一步计划：
+  - 若 `std/entropy` 受控且 success 不再坍塌，继续跑 300-500 iter 中等规模训练确认是否突破 0.339 早期峰值并保持稳定。
+  - 若 `std/entropy` 受控但 `reach_loss` 仍快速发散，下一步优先审查 reach critic 输出、target 和 bootstrap value 的边界约束。
+  - 若 `std/entropy` 受控但 `energy_min_ratio` 和 `done_mean` 仍接近 1，下一步优先审查能耗尺度、`min_energy`、动作裁剪后的能耗计算和 earliest-index done 语义。
+  - 若 `std` 被上界长期卡住且 success 无改善，需要重新评估 entropy 系数是否仍偏大，或策略均值学习是否被 critic advantage 噪声污染。
+
 ## 决策记录
 
 - 2026-06-05：确认 `std` 未加入 policy optimizer 是确定实现 bug，已按最小修复处理。该改动不改变 EC-EFPPO 的 GAE/target 语义，只恢复参考实现中 policy 分布参数可训练的基本行为。
 - 2026-06-05：新增诊断日志属于观测性改动，用于后续判断 reach critic 发散、energy 饱和和 `done_for_gae` 过密是否仍存在。
 - 2026-06-05：临时训练已证明 `std` 修复生效，但没有证明训练稳定性已解决；下一轮应优先分析 energy 饱和和 done mask。
+- 2026-06-06：确认直接优化实际 `std` 会造成探索噪声无界增长。EC-EFPPO 改为优化 `log_std`，通过 `exp(clamp(log_std))` 得到标准差，并降低/退火 entropy，先消除策略分布层面的不稳定来源。
 
 ## 记录模板
 
@@ -120,7 +178,7 @@
 <!--
 示例记录，后续正式记录时可以参考这个结构，不要把本注释当作真实结论。
 
-### D002: reach critic target 量级异常
+### D999: reach critic target 量级异常
 
 - 日期：2026-06-06
 - 状态：open

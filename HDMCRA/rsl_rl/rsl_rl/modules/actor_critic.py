@@ -171,7 +171,8 @@ class EC_EFPPO_ActorCritic(nn.Module):
 
     def __init__(self, num_actor_obs, num_critic_obs, num_actions,
                  hidden_dim=256, num_hidden_layers=2,
-                 init_noise_std=1.0, activation='elu', **kwargs):
+                 init_noise_std=1.0, activation='elu',
+                 log_std_min=-5.0, log_std_max=2.0, **kwargs):
         if kwargs:
             print("EC_EFPPO_ActorCritic.__init__ got unexpected arguments, "
                   "which will be ignored: " + str([key for key in kwargs.keys()]))
@@ -212,8 +213,14 @@ class EC_EFPPO_ActorCritic(nn.Module):
         reach_critic_layers.append(nn.Linear(hidden_dim, 1))
         self.reach_critic = nn.Sequential(*reach_critic_layers)
 
-        # ---- Action noise (learnable log_std) ----
-        self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
+        # ---- Action noise ----
+        # 参考 JAX 实现优化 log_std，再通过 exp(log_std) 得到正标准差。
+        self.log_std_min = float(log_std_min)
+        self.log_std_max = float(log_std_max)
+        init_noise_std = max(float(init_noise_std), 1e-6)
+        init_log_std = torch.log(torch.ones(num_actions) * init_noise_std)
+        init_log_std.clamp_(self.log_std_min, self.log_std_max)
+        self.log_std = nn.Parameter(init_log_std)
         self.distribution = None
         Normal.set_default_validate_args = False
 
@@ -256,6 +263,24 @@ class EC_EFPPO_ActorCritic(nn.Module):
         raise NotImplementedError
 
     # ---- Distribution helpers ----
+
+    @property
+    def std(self):
+        """当前动作标准差。由 log_std 限幅后指数映射得到，始终为正。"""
+        return torch.exp(torch.clamp(self.log_std, self.log_std_min, self.log_std_max))
+
+    def clamp_log_std_(self):
+        """将可学习 log_std 参数保持在配置范围内。"""
+        with torch.no_grad():
+            self.log_std.clamp_(self.log_std_min, self.log_std_max)
+
+    def load_state_dict(self, state_dict, strict: bool = True):
+        """兼容旧 checkpoint：旧版本保存的是实际 std 参数。"""
+        if "log_std" not in state_dict and "std" in state_dict:
+            state_dict = dict(state_dict)
+            old_std = state_dict.pop("std").detach().float().clamp_min(1e-6)
+            state_dict["log_std"] = torch.log(old_std).clamp(self.log_std_min, self.log_std_max)
+        return super().load_state_dict(state_dict, strict=strict)
 
     def update_distribution(self, observations):
         mean = self.actor(observations)

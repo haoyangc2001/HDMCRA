@@ -156,14 +156,31 @@ def test_orthogonal_init():
 # ---- Test 9: log_std 为可学习参数 ----
 def test_learnable_std():
     model = make_model(num_actions=12)
-    assert isinstance(model.std, nn.Parameter), \
-        "std 应为 nn.Parameter"
-    assert model.std.shape == (12,), f"std shape: {model.std.shape}"
-    assert model.std.requires_grad, "std 应可学习"
-    # 初始值应全为 init_noise_std (1.0)
-    assert torch.allclose(model.std.data, torch.ones(12)), \
+    assert isinstance(model.log_std, nn.Parameter), \
+        "log_std 应为 nn.Parameter"
+    assert model.log_std.shape == (12,), f"log_std shape: {model.log_std.shape}"
+    assert model.log_std.requires_grad, "log_std 应可学习"
+    # init_noise_std=1.0 时 log_std 应为 0，std 应为 1。
+    assert torch.allclose(model.log_std.data, torch.zeros(12)), \
+        "log_std 初始值应为 log(1.0)=0"
+    assert torch.allclose(model.std.detach(), torch.ones(12)), \
         "std 初始值应为 1.0"
     print("[PASS] test_learnable_std")
+
+
+def test_load_old_std_checkpoint():
+    """旧 checkpoint 使用 std 参数，新实现应自动转换为 log_std。"""
+    model = make_model(num_actions=12)
+    state = model.state_dict()
+    state.pop('log_std')
+    state['std'] = torch.ones(12) * 0.5
+
+    loaded = make_model(num_actions=12)
+    loaded.load_state_dict(state)
+
+    assert torch.allclose(loaded.std.detach(), torch.ones(12) * 0.5)
+    assert torch.allclose(loaded.log_std.detach(), torch.log(torch.ones(12) * 0.5))
+    print("[PASS] test_load_old_std_checkpoint")
 
 
 # ---- Test 10: 梯度可以独立回传 ----
@@ -244,6 +261,7 @@ if __name__ == '__main__':
         test_act_inference,
         test_orthogonal_init,
         test_learnable_std,
+        test_load_old_std_checkpoint,
         test_independent_gradients,
         test_different_obs_dims,
         test_import_from_package,

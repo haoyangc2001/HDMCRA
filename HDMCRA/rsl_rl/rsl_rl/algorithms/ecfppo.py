@@ -376,8 +376,8 @@ class EC_EFPPO:
         self.anneal_entropy = anneal_entropy
 
         # 三个独立优化器（对应 JAX 版三个独立 TrainState）
-        # policy optimizer 必须同时管理 actor MLP 和动作分布 std；否则 entropy/std 不会更新。
-        self.policy_params = list(self.actor_critic.actor.parameters()) + [self.actor_critic.std]
+        # policy optimizer 必须同时管理 actor MLP 和动作分布 log_std；否则 entropy/std 不会更新。
+        self.policy_params = list(self.actor_critic.actor.parameters()) + [self.actor_critic.log_std]
         self.policy_optimizer = optim.Adam(
             self.policy_params, lr=learning_rate
         )
@@ -497,7 +497,7 @@ class EC_EFPPO:
                 self.policy_params, self.max_grad_norm
             )
             self.policy_optimizer.step()
-            self.actor_critic.std.data.clamp_(min=1e-4)
+            self.actor_critic.clamp_log_std_()
 
             # ===================== Energy Critic 更新 =====================
             # 前向传播 energy critic

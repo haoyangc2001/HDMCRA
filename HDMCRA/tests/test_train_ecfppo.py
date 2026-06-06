@@ -25,8 +25,11 @@ def test_config_class():
     assert cfg.algorithm.gae_lambda == 0.95
     assert cfg.algorithm.clip_eps == 0.2
     assert cfg.algorithm.vf_coef == 1.0
-    assert cfg.algorithm.entropy_coef == 0.01
-    assert cfg.algorithm.anneal_entropy == False
+    assert cfg.algorithm.init_noise_std == 0.5
+    assert cfg.algorithm.log_std_min == -2.0
+    assert cfg.algorithm.log_std_max == 0.0
+    assert cfg.algorithm.entropy_coef == 0.001
+    assert cfg.algorithm.anneal_entropy == True
     assert cfg.algorithm.max_grad_norm == 0.5
     assert cfg.algorithm.learning_rate == 1e-3
     assert cfg.algorithm.num_learning_epochs == 10
@@ -94,7 +97,7 @@ def test_alg_with_config():
     assert alg.gamma_reach_init == 0.999
     assert alg.clip_param == 0.2
     assert alg.value_loss_coef == 1.0
-    assert alg.anneal_entropy == False
+    assert alg.anneal_entropy == True
     print("[PASS] test_alg_with_config")
 
 

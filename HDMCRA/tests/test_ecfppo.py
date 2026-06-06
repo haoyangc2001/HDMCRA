@@ -241,7 +241,7 @@ def test_ecefppo_instantiation():
     policy_params = set(id(p) for p in alg.policy_optimizer.param_groups[0]['params'])
     energy_params = set(id(p) for p in alg.energy_optimizer.param_groups[0]['params'])
     reach_params = set(id(p) for p in alg.reach_optimizer.param_groups[0]['params'])
-    assert id(model.std) in policy_params, "policy optimizer 必须包含动作 std 参数"
+    assert id(model.log_std) in policy_params, "policy optimizer 必须包含动作 log_std 参数"
     assert policy_params.isdisjoint(energy_params)
     assert policy_params.isdisjoint(reach_params)
     assert energy_params.isdisjoint(reach_params)
@@ -266,10 +266,12 @@ def test_policy_optimizer_updates_std():
     loss = -model.entropy.mean()
     loss.backward()
     alg.policy_optimizer.step()
-    model.std.data.clamp_(min=1e-4)
+    model.clamp_log_std_()
 
     assert not torch.allclose(model.std.detach(), old_std), "std 应在 policy optimizer step 后变化"
     assert torch.all(model.std.detach() > 0), "std 必须保持正值"
+    assert torch.all(model.log_std.detach() <= model.log_std_max + 1e-6), "log_std 不应超过上界"
+    assert torch.all(model.log_std.detach() >= model.log_std_min - 1e-6), "log_std 不应低于下界"
     print("[PASS] test_policy_optimizer_updates_std")
 
 

@@ -155,8 +155,10 @@ def train_ecfppo(args) -> None:
         num_actions=env.num_actions,
         hidden_dim=net_cfg.hidden_dim,
         num_hidden_layers=net_cfg.num_hidden_layers,
-        init_noise_std=1.0,
+        init_noise_std=getattr(train_cfg.algorithm, 'init_noise_std', 1.0),
         activation=net_cfg.activation,
+        log_std_min=getattr(train_cfg.algorithm, 'log_std_min', -5.0),
+        log_std_max=getattr(train_cfg.algorithm, 'log_std_max', 2.0),
     )
 
     # ---- 初始化 EC_EFPPO ----
