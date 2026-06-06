@@ -14,7 +14,8 @@
 | ID | 状态 | 严重性 | 问题 | 相关日志/文件 | 下一步 | 验证后下一步计划 |
 |---|---|---|---|---|---|---|
 | D001 | resolved | P0 | 首轮全量训练 success 低平台，critic loss 量级异常，entropy/std 不更新 | `legged_gym_go2/logs/ecfppo_go2/20260605-102937/training.log` | 已修复 `std` 未进入 policy optimizer，并补充训练诊断指标 | 已被 D002 取代：`std` 能更新后出现无界增长，需改为 `log_std` 参数化并限制探索噪声 |
-| D002 | open | P0 | `std` 可更新后无界增长，entropy 推高探索噪声，success 早期峰值后坍塌 | `legged_gym_go2/logs/ecfppo_go2/20260605-231206/training.log` | 使用 `log_std -> exp` 参数化、限制 `std` 范围、降低并退火 entropy | 修改后跑 100-200 iter 诊断训练；若噪声受控但 reach/energy 仍异常，转向 critic target、energy 饱和和 done mask 语义 |
+| D002 | open | P0 | `std` 可更新后无界增长，entropy 推高探索噪声，success 早期峰值后坍塌 | `legged_gym_go2/logs/ecfppo_go2/20260605-231206/training.log` | 已用 `log_std -> exp` 和上界控制探索噪声；最新训练证明 std 已受控但 success 仍坍塌 | 转入 D003：定位 reach target/bootstrap 发散与 energy/done 饱和的因果关系 |
+| D003 | open | P0 | reach target/bootstrap 发散与 energy/done 饱和 | `legged_gym_go2/logs/ecfppo_go2/20260606-103051/training.log` | 增加 done/open 分组 debug 统计，跑 50-100 iter 诊断训练 | 若极端 target 来自 non-done bootstrap，优先约束 reach critic bootstrap/target；若 done 组也异常，优先检查 GAE done 语义 |
 
 ## 训练记录索引
 
@@ -22,6 +23,8 @@
 |---|---|---|---|---|---|---|---|
 | 20260605-102937 | 2026-06-05 | `train_ecfppo.py --headless --num_envs 4096 --max_iterations 1500` | 1-1500 | 0.194 | 0.171 | `reach_loss` 到 1e20 后仍停在 1e16；`energy_loss` 到 1e7；entropy 恒定 | 训练完整但未稳定收敛，存在明确实现/设计可疑点 |
 | 20260605-231206 | 2026-06-05 | 修复 `std` optimizer 后再次训练 | 1-1387 | 0.339 | 约 0.096 | `std_mean` 从约 1.3 增至 100+；entropy 从约 4.3 增至 18+；`reach_loss` 延迟但仍到 1e19 | `std` optimizer 修复生效，但直接优化 std 会导致探索噪声失控，success 早期改善后坍塌 |
+| 20260606-103051 | 2026-06-06 | `log_std` 上界、低 entropy 并退火后的训练 | 1-446 | 0.307 | 0.042 | `std` 在 iter 30 后稳定为 1.0；`done_mean≈0.993-0.998`；`energy_min_ratio≈0.972`；`reach_loss` 到 4.39e18 | 探索噪声已受控，但 reach target/bootstrap 发散和 energy/done 饱和仍主导训练失败 |
+| 20260606-143037 | 2026-06-06 | `--headless --num_envs 16 --max_iterations 50`，D003 分组 debug | 1-50 | 0.375 | 0.125 | 小规模未复现 reach loss 爆炸；`done_mean=0.9625-0.9981`；`energy_min_ratio=0.9602-0.9701`；`std_mean` 最终 0.9962 | 分组 debug 可用；energy/done 饱和稳定存在，早期最小 target 可来自极少量 non-done 样本 |
 
 ## 分析记录
 
@@ -145,12 +148,72 @@
   - 若 `std/entropy` 受控但 `energy_min_ratio` 和 `done_mean` 仍接近 1，下一步优先审查能耗尺度、`min_energy`、动作裁剪后的能耗计算和 earliest-index done 语义。
   - 若 `std` 被上界长期卡住且 success 无改善，需要重新评估 entropy 系数是否仍偏大，或策略均值学习是否被 critic advantage 噪声污染。
 
+
+### D003: reach target/bootstrap 发散与 energy/done 饱和
+
+- 日期：2026-06-06
+- 状态：open
+- 严重性：P0
+- 触发原因：`log_std` 上界控制后，最新训练仍出现 success 坍塌、reach loss 爆炸和 energy/done 饱和。
+- 相关日志：`legged_gym_go2/logs/ecfppo_go2/20260606-103051/training.log`
+- 现象：
+  - 当前日志解析到 iter 446，共 446 条 iter 记录和 44 条 debug 记录。
+  - `std_mean` 从 iter 10 的 0.6034 上升到 iter 30 的 1.0000，之后稳定在上界 1.0000，说明 D002 的 `log_std` 限幅生效。
+  - `entropy` 在 iter 23 后稳定为 4.2568，对应 `std=1.0` 的上界熵；这不是旧版 std 未训练，而是被上界控制后的结果。
+  - `success` 峰值为 0.307（iter 29），后续坍塌，iter 446 为 0.042。
+  - `reach_loss` 在 iter 24 超过 1e6，iter 43 超过 1e12，iter 335 超过 1e18，最大约 4.39e18。
+  - `done_mean` 全程约 0.993-0.998，`energy_min_ratio` 全程约 0.972，说明大部分 rollout 时间步被 done mask 截断，同时能量长期卡在下界。
+  - `v_reach_min` 和 `t_reach_min` 同步扩散到 1e9 量级，例如 iter 440 时分别约为 -8.264e9 和 -7.732e9。
+- 初步假设：
+  - H1：极端 `targets_reach` 主要来自少量 `done_for_gae == 0` 的 bootstrap 路径，critic 输出发散后污染下一轮 target。
+  - H2：若 `done_for_gae == 1` 组也出现极端 target，则 `calculate_reach_gae()` 的 done 语义或时间对齐存在实现问题。
+  - H3：`energy_min_ratio≈0.972` 说明 energy 下界饱和是独立异常，会让 `calculate_indexs3()` 和 combined advantage 的语义持续退化。
+  - H4：当前不应继续调 entropy/std；策略分布层面的无界探索已经被控制，剩余问题在 critic target、done mask 和 energy 语义。
+- 代码链路：
+  - `EC_EFPPO_Buffer.compute_advantages()`：构造 `done_for_gae`，计算 reach、energy 和 combined advantage。
+  - `calculate_indexs3()`：根据 energy、energy consumption 和 reach 序列生成 earliest-index done 矩阵。
+  - `calculate_reach_gae()`：使用 `done_for_gae`、`h/g` 序列和 `V_reach_append` 生成 reach target。
+  - `HierarchicalGO2Env.step()` 和 `HighLevelNavigationEnv.update_energy()`：每个高层动作按裁剪后动作平方消耗能量，并将 energy clamp 到下界。
+- 证据：
+  - D002 修改后 `std` 不再无界增长，排除了上一轮主要干扰项。
+  - `done_mean` 和 `energy_min_ratio` 从 iter 10 开始就接近 1，早于 reach loss 进入 1e12 量级。
+  - `t_reach_min` 随 `v_reach_min` 一起进入巨大负值，说明 target 已被 bootstrap value 污染，而不是单纯环境 `g/h` 原始量级异常。
+- 结论：
+  - 当前最优先不是继续长训或调学习率，而是增加分组 debug，定位极端 target 来自 done 组、non-done 组还是 min target 的特定 bootstrap 来源。
+  - 本轮代码只增加诊断统计，不改变训练语义，保证下一次短训能回答具体因果问题。
+- 改动：
+  - `rsl_rl/rsl_rl/algorithms/ecfppo.py`：新增 masked debug stats，分别统计 `done_for_gae == 1` 与 `done_for_gae == 0` 下的 `targets_reach`、`values_reach` 和 `advantages_total`。
+  - `rsl_rl/rsl_rl/algorithms/ecfppo.py`：记录 `targets_reach_min` 对应的时间步、done 标记、当前/下一步 reach value、`g/h` 和 energy。
+  - `legged_gym_go2/legged_gym/scripts/train_ecfppo.py`：在 debug 行输出 `open_ratio`、`t_done`、`t_open`、`v_open`、`tmin_src` 和 `adv_open_std`。
+- 验证：
+  - 已运行 `python3 -m py_compile rsl_rl/rsl_rl/algorithms/ecfppo.py legged_gym_go2/legged_gym/scripts/train_ecfppo.py`，语法检查通过。
+  - 已运行 `conda run -n hdmcr python tests/test_ecfppo.py`，结果 16 passed。
+  - 已尝试运行 `train_ecfppo.py --num_envs 64 --max_iterations 60` 和 `--headless --num_envs 64 --max_iterations 60`；两次日志实际写入项目根目录 `logs/ecfppo_go2/`，但因误查旧路径被提前终止，只得到 iter 14/19 的不完整日志。
+  - 已完成 50 iter 诊断训练：`logs/ecfppo_go2/20260606-143037/training.log`，命令为 `--headless --num_envs 16 --max_iterations 50`。
+  - 该小规模训练未复现大规模 reach loss 爆炸：`reach_loss` 范围约 4.13e4 到 1.63e5，final 7.53e4。
+  - `std_mean` 从 0.6003 增至 0.9962，仍受上界控制；`entropy` final 4.2433。
+  - `done_mean` 始终很高，范围约 0.9625-0.9981；`energy_min_ratio` 始终约 0.9602-0.9701，说明 energy/done 饱和在小规模训练中仍稳定存在。
+  - iter 10 和 iter 20 的 `targets_reach_min` 来自 `done_for_gae == 0` 的 open 样本；iter 30/40/50 的最小 target 来自 done 样本，但数值仍在约 `[-300, 1138]` 的语义范围内。
+  - 结论：新增分组 debug 能正常工作；小规模短训不适合验证 reach loss 爆炸，但足以确认 energy/done 饱和和 open 样本来源统计。
+- 后续动作：
+  - 用较大 `num_envs` 或复用用户后续训练解析新增字段，确认大规模 reach 发散时极端 target 是否仍主要来自 open 样本。
+  - 在改 reach clamp 前，先补一个离线/单元诊断：构造少量 non-done + 极端 `V_reach_append` 的 `calculate_reach_gae()` 用例，验证 bootstrap 污染路径。
+  - 若来自 non-done bootstrap，优先给 reach bootstrap value/target 做语义边界约束。
+  - 若 done 组也异常，优先检查 `calculate_reach_gae()` 的 done 处理和时间对齐。
+  - 若 reach target 被控制后 `energy_min_ratio` 仍接近 1，下一步单独处理 energy scale、`min_energy` 和 earliest-index done 语义。
+- 验证后下一步计划：
+  - 如果短训中 `t_open_min` 明显比 `t_done_min` 更极端，下一轮实现 reach bootstrap/target clamp，并补单元测试。
+  - 如果短训中 `t_done_min` 也进入异常大负值，下一轮写最小张量用例复现 `calculate_reach_gae()` 的 done 分支。
+  - 如果两组 target 都可控但 `success` 仍坍塌，转向 energy 饱和和 combined advantage 语义。
+
 ## 决策记录
 
 - 2026-06-05：确认 `std` 未加入 policy optimizer 是确定实现 bug，已按最小修复处理。该改动不改变 EC-EFPPO 的 GAE/target 语义，只恢复参考实现中 policy 分布参数可训练的基本行为。
 - 2026-06-05：新增诊断日志属于观测性改动，用于后续判断 reach critic 发散、energy 饱和和 `done_for_gae` 过密是否仍存在。
 - 2026-06-05：临时训练已证明 `std` 修复生效，但没有证明训练稳定性已解决；下一轮应优先分析 energy 饱和和 done mask。
 - 2026-06-06：确认直接优化实际 `std` 会造成探索噪声无界增长。EC-EFPPO 改为优化 `log_std`，通过 `exp(clamp(log_std))` 得到标准差，并降低/退火 entropy，先消除策略分布层面的不稳定来源。
+- 2026-06-06：最新训练证明 `std` 已受控，但 reach target/bootstrap 发散与 energy/done 饱和仍导致训练坍塌。下一步只增加分组诊断统计，不改变训练语义。
+- 2026-06-06：已增加 D003 分组诊断统计并通过单元测试；50 iter 小规模短训完成。短训未复现 reach loss 爆炸，但确认 energy/done 饱和稳定存在，且新增分组字段可用于后续大规模日志判定。
 
 ## 记录模板
 

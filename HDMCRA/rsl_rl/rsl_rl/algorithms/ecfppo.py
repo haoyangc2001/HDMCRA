@@ -106,6 +106,26 @@ class EC_EFPPO_Buffer:
             f"{prefix}_std": values.std(unbiased=False).item(),
         }
 
+    @staticmethod
+    def _masked_stats(prefix: str, tensor: torch.Tensor, mask: torch.Tensor) -> Dict[str, float]:
+        values = tensor.detach().float()[mask.bool()]
+        stats = {f"{prefix}_count": float(values.numel())}
+        if values.numel() == 0:
+            stats.update({
+                f"{prefix}_min": float("nan"),
+                f"{prefix}_max": float("nan"),
+                f"{prefix}_mean": float("nan"),
+                f"{prefix}_std": float("nan"),
+            })
+        else:
+            stats.update({
+                f"{prefix}_min": values.min().item(),
+                f"{prefix}_max": values.max().item(),
+                f"{prefix}_mean": values.mean().item(),
+                f"{prefix}_std": values.std(unbiased=False).item(),
+            })
+        return stats
+
     def add(
         self,
         obs: torch.Tensor,
@@ -275,6 +295,34 @@ class EC_EFPPO_Buffer:
         self.debug_stats.update(self._stats("g_values", self.g_values))
         self.debug_stats.update(self._stats("h_values", self.h_values))
         self.debug_stats["done_for_gae_mean"] = done_for_gae.float().mean().item()
+
+        done_mask = done_for_gae.bool()
+        open_mask = ~done_mask
+        self.debug_stats.update(self._masked_stats("targets_reach_done", self.targets_reach, done_mask))
+        self.debug_stats.update(self._masked_stats("targets_reach_open", self.targets_reach, open_mask))
+        self.debug_stats.update(self._masked_stats("values_reach_done", self.value_reach, done_mask))
+        self.debug_stats.update(self._masked_stats("values_reach_open", self.value_reach, open_mask))
+        self.debug_stats.update(self._masked_stats("advantages_total_done", self.advantages_total, done_mask))
+        self.debug_stats.update(self._masked_stats("advantages_total_open", self.advantages_total, open_mask))
+        done_env_mean = done_for_gae.float().mean(dim=0)
+        self.debug_stats.update(self._stats("done_env_mean", done_env_mean))
+        self.debug_stats["done_for_gae_open_ratio"] = open_mask.float().mean().item()
+
+        flat_min_idx = torch.argmin(self.targets_reach.reshape(-1))
+        min_t = int(flat_min_idx // self.num_envs)
+        min_env = int(flat_min_idx % self.num_envs)
+        self.debug_stats["targets_reach_min_t"] = float(min_t)
+        self.debug_stats["targets_reach_min_done"] = done_for_gae[min_t, min_env].float().item()
+        self.debug_stats["targets_reach_min_value_reach"] = (
+            self.value_reach[min_t, min_env].detach().float().item()
+        )
+        self.debug_stats["targets_reach_min_next_value_reach"] = (
+            V_reach_append[min_t + 1, min_env].detach().float().item()
+        )
+        self.debug_stats["targets_reach_min_g"] = self.g_values[min_t, min_env].detach().float().item()
+        self.debug_stats["targets_reach_min_h"] = self.h_values[min_t, min_env].detach().float().item()
+        self.debug_stats["targets_reach_min_energy"] = self.energy[min_t, min_env].detach().float().item()
+
         self.debug_stats["energy_min_ratio"] = (
             energy_append <= energy_append.min() + 1e-6
         ).float().mean().item()

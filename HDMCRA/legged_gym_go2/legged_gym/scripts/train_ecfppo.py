@@ -343,7 +343,19 @@ def train_ecfppo(args) -> None:
                     f"energy_neg_ratio {debug_stats.get('energy_negative_ratio', float('nan')):.4f} | "
                     f"v_reach [{debug_stats.get('values_reach_min', float('nan')):.3e}, {debug_stats.get('values_reach_max', float('nan')):.3e}] | "
                     f"t_reach [{debug_stats.get('targets_reach_min', float('nan')):.3e}, {debug_stats.get('targets_reach_max', float('nan')):.3e}] | "
-                    f"adv_total_std {debug_stats.get('advantages_total_std', float('nan')):.3e}"
+                    f"open_ratio {debug_stats.get('done_for_gae_open_ratio', float('nan')):.4f} | "
+                    f"t_done [{debug_stats.get('targets_reach_done_min', float('nan')):.3e}, {debug_stats.get('targets_reach_done_max', float('nan')):.3e}] | "
+                    f"t_open [{debug_stats.get('targets_reach_open_min', float('nan')):.3e}, {debug_stats.get('targets_reach_open_max', float('nan')):.3e}] | "
+                    f"v_open [{debug_stats.get('values_reach_open_min', float('nan')):.3e}, {debug_stats.get('values_reach_open_max', float('nan')):.3e}] | "
+                    f"tmin_src done {debug_stats.get('targets_reach_min_done', float('nan')):.0f} "
+                    f"t {debug_stats.get('targets_reach_min_t', float('nan')):.0f} "
+                    f"v {debug_stats.get('targets_reach_min_value_reach', float('nan')):.3e} "
+                    f"next_v {debug_stats.get('targets_reach_min_next_value_reach', float('nan')):.3e} "
+                    f"g {debug_stats.get('targets_reach_min_g', float('nan')):.3e} "
+                    f"h {debug_stats.get('targets_reach_min_h', float('nan')):.3e} "
+                    f"energy {debug_stats.get('targets_reach_min_energy', float('nan')):.3e} | "
+                    f"adv_total_std {debug_stats.get('advantages_total_std', float('nan')):.3e} | "
+                    f"adv_open_std {debug_stats.get('advantages_total_open_std', float('nan')):.3e}"
                 )
                 print(debug_line)
                 log_fp.write(debug_line + "\n")
