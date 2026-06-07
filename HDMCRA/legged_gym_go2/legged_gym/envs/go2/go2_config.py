@@ -261,6 +261,8 @@ class GO2EC_EFPPOCfgPPO(GO2HighLevelCfgPPO):
         # Energy critic 专用梯度裁剪（更严格，防止 loss 爆炸）
         # 默认为 max_grad_norm 的 1/5，即 0.1
         max_grad_norm_energy = 0.1
+        # Reach critic bootstrap value 的语义边界，防止少量 open 样本污染 target。
+        reach_value_clip = 5000.0
         # Learning rate — Plan A: 3e-4 → 1e-3（对齐基线）
         learning_rate = 1e-3
         # Number of learning epochs per update

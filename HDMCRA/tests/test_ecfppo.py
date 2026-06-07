@@ -192,6 +192,50 @@ def test_compute_advantages_shapes():
     print("[PASS] test_compute_advantages_shapes")
 
 
+def test_reach_bootstrap_value_clip_bounds_targets():
+    """P0: 极端 reach bootstrap 不应把 open 样本 target 拉到无语义量级。"""
+    device = torch.device('cpu')
+    num_envs = 2
+    horizon = 4
+    obs_dim = 3
+    act_dim = 1
+    buffer = EC_EFPPO_Buffer(
+        num_envs=num_envs, horizon=horizon, obs_shape=(obs_dim,),
+        action_shape=(act_dim,), device=device, reach_value_clip=5000.0,
+    )
+
+    for _ in range(horizon):
+        buffer.add(
+            obs=torch.zeros(num_envs, obs_dim),
+            actions=torch.zeros(num_envs, act_dim),
+            log_probs=torch.zeros(num_envs),
+            values=torch.zeros(num_envs),
+            value_reach=torch.zeros(num_envs),
+            energy=torch.ones(num_envs) * -400.0,
+            energy_consumption=torch.zeros(num_envs),
+            g_values=torch.ones(num_envs) * 500.0,
+            h_values=torch.ones(num_envs) * -300.0,
+            dones=torch.zeros(num_envs),
+            next_obs=torch.zeros(num_envs, obs_dim),
+            next_energy=torch.ones(num_envs) * -400.0,
+            next_g=torch.ones(num_envs) * 500.0,
+            next_h=torch.ones(num_envs) * -300.0,
+        )
+
+    last_energy = torch.zeros(num_envs)
+    last_reach = torch.ones(num_envs) * -1e9
+    buffer.compute_advantages(
+        last_energy, last_reach,
+        gamma_energy=0.99, gamma_reach=0.999,
+        gae_lambda=0.95, gamma_reach_init=0.999,
+    )
+
+    assert buffer.debug_stats['reach_value_clip_ratio'] > 0.0
+    assert buffer.targets_reach.min().item() >= -5000.0 - 1e-3
+    assert abs(buffer.debug_stats['targets_reach_min_next_value_reach']) <= 5000.0
+    print("[PASS] test_reach_bootstrap_value_clip_bounds_targets")
+
+
 # ---- Test 5: Buffer iter_batches ----
 def test_iter_batches():
     _, buffer, _ = make_model_and_buffer()
@@ -488,6 +532,7 @@ if __name__ == '__main__':
         test_buffer_add,
         test_buffer_clear,
         test_compute_advantages_shapes,
+        test_reach_bootstrap_value_clip_bounds_targets,
         test_iter_batches,
         test_ecefppo_instantiation,
         test_policy_optimizer_updates_std,

@@ -59,10 +59,12 @@ class EC_EFPPO_Buffer:
         obs_shape: Tuple[int, ...],
         action_shape: Tuple[int, ...],
         device: torch.device,
+        reach_value_clip: float = None,
     ):
         self.num_envs = num_envs
         self.horizon = horizon
         self.device = device
+        self.reach_value_clip = reach_value_clip
 
         obs_dim = obs_shape[0]
         act_dim = action_shape[0]
@@ -219,6 +221,13 @@ class EC_EFPPO_Buffer:
         V_reach_append = torch.cat(
             [self.value_reach, last_values_reach.unsqueeze(0)], dim=0
         )
+        if self.reach_value_clip is not None:
+            clip = float(self.reach_value_clip)
+            V_reach_for_bootstrap = V_reach_append.clamp(-clip, clip)
+            last_values_reach_for_bootstrap = last_values_reach.clamp(-clip, clip)
+        else:
+            V_reach_for_bootstrap = V_reach_append
+            last_values_reach_for_bootstrap = last_values_reach
         # energy 序列 [T+1, N]
         energy_append = self.energy
         # energy value 序列 [T+1, N]
@@ -228,7 +237,7 @@ class EC_EFPPO_Buffer:
 
         # ---- 组合信号（对应 JAX 版） ----
         # V_total = max(V_reach, V_energy - energy)
-        V_total_append = torch.maximum(V_reach_append, V_energy_append - energy_append)
+        V_total_append = torch.maximum(V_reach_for_bootstrap, V_energy_append - energy_append)
         # g_append = max(reach, -energy)
         g_append = torch.maximum(reach_append, -energy_append)
 
@@ -240,7 +249,7 @@ class EC_EFPPO_Buffer:
             energy_append,
             reach_append,
             last_values_energy,
-            last_values_reach,
+            last_values_reach_for_bootstrap,
         )
         # done: [T+1, N]，去掉最后一行（对应 bootstrap）
         # 注意：calculate_indexs3 返回的 done 形状是 [T+1, N]
@@ -252,7 +261,7 @@ class EC_EFPPO_Buffer:
 
         # ---- Step 3: 计算 reach 优势 ----
         advantages_h, targets_h = calculate_reach_gae(
-            gamma_reach, gae_lambda, reach_append, V_reach_append, done_for_gae
+            gamma_reach, gae_lambda, reach_append, V_reach_for_bootstrap, done_for_gae
         )
 
         # ---- Step 4: 计算 energy 优势 ----
@@ -288,6 +297,15 @@ class EC_EFPPO_Buffer:
         # 诊断统计用于定位 critic/target/advantage 量级问题。
         self.debug_stats = {}
         self.debug_stats.update(self._stats("values_reach", self.value_reach))
+        if self.reach_value_clip is not None:
+            clip = float(self.reach_value_clip)
+            self.debug_stats["reach_value_clip"] = clip
+            self.debug_stats["reach_value_clip_ratio"] = (
+                (V_reach_append.detach().abs() > clip).float().mean().item()
+            )
+        else:
+            self.debug_stats["reach_value_clip"] = float("nan")
+            self.debug_stats["reach_value_clip_ratio"] = 0.0
         self.debug_stats.update(self._stats("targets_reach", self.targets_reach))
         self.debug_stats.update(self._stats("values_energy", self.values))
         self.debug_stats.update(self._stats("targets_energy", self.targets_energy))
@@ -317,7 +335,7 @@ class EC_EFPPO_Buffer:
             self.value_reach[min_t, min_env].detach().float().item()
         )
         self.debug_stats["targets_reach_min_next_value_reach"] = (
-            V_reach_append[min_t + 1, min_env].detach().float().item()
+            V_reach_for_bootstrap[min_t + 1, min_env].detach().float().item()
         )
         self.debug_stats["targets_reach_min_g"] = self.g_values[min_t, min_env].detach().float().item()
         self.debug_stats["targets_reach_min_h"] = self.h_values[min_t, min_env].detach().float().item()
@@ -399,6 +417,7 @@ class EC_EFPPO:
         entropy_coef: float = 0.01,
         max_grad_norm: float = 0.5,
         max_grad_norm_energy: float = None,
+        reach_value_clip: float = None,
         anneal_entropy: bool = False,
         device: str = "cpu",
         **kwargs,
@@ -421,6 +440,7 @@ class EC_EFPPO:
         # Energy critic 使用更严格的梯度裁剪，防止 loss 爆炸
         # 如果未指定，默认使用 max_grad_norm 的 1/5
         self.max_grad_norm_energy = max_grad_norm_energy if max_grad_norm_energy is not None else max_grad_norm / 5.0
+        self.reach_value_clip = reach_value_clip
         self.anneal_entropy = anneal_entropy
 
         # 三个独立优化器（对应 JAX 版三个独立 TrainState）
@@ -454,7 +474,8 @@ class EC_EFPPO:
         obs_shape = tuple(obs_shape) if isinstance(obs_shape, (list, tuple)) else (obs_shape,)
         action_shape = tuple(action_shape) if isinstance(action_shape, (list, tuple)) else (action_shape,)
         self.buffer = EC_EFPPO_Buffer(
-            num_envs, horizon, obs_shape, action_shape, self.device
+            num_envs, horizon, obs_shape, action_shape, self.device,
+            reach_value_clip=self.reach_value_clip,
         )
 
     def act(

@@ -179,6 +179,7 @@ def train_ecfppo(args) -> None:
         entropy_coef=train_cfg.algorithm.entropy_coef,
         max_grad_norm=train_cfg.algorithm.max_grad_norm,
         max_grad_norm_energy=max_grad_norm_energy,
+        reach_value_clip=getattr(train_cfg.algorithm, 'reach_value_clip', None),
         anneal_entropy=train_cfg.algorithm.anneal_entropy,
         device=str(device),
     )
@@ -343,6 +344,7 @@ def train_ecfppo(args) -> None:
                     f"energy_neg_ratio {debug_stats.get('energy_negative_ratio', float('nan')):.4f} | "
                     f"v_reach [{debug_stats.get('values_reach_min', float('nan')):.3e}, {debug_stats.get('values_reach_max', float('nan')):.3e}] | "
                     f"t_reach [{debug_stats.get('targets_reach_min', float('nan')):.3e}, {debug_stats.get('targets_reach_max', float('nan')):.3e}] | "
+                    f"reach_clip_ratio {debug_stats.get('reach_value_clip_ratio', float('nan')):.4f} | "
                     f"open_ratio {debug_stats.get('done_for_gae_open_ratio', float('nan')):.4f} | "
                     f"t_done [{debug_stats.get('targets_reach_done_min', float('nan')):.3e}, {debug_stats.get('targets_reach_done_max', float('nan')):.3e}] | "
                     f"t_open [{debug_stats.get('targets_reach_open_min', float('nan')):.3e}, {debug_stats.get('targets_reach_open_max', float('nan')):.3e}] | "

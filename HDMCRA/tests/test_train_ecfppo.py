@@ -31,6 +31,7 @@ def test_config_class():
     assert cfg.algorithm.entropy_coef == 0.001
     assert cfg.algorithm.anneal_entropy == True
     assert cfg.algorithm.max_grad_norm == 0.5
+    assert cfg.algorithm.reach_value_clip == 5000.0
     assert cfg.algorithm.learning_rate == 1e-3
     assert cfg.algorithm.num_learning_epochs == 10
     assert cfg.algorithm.num_mini_batches == 8
