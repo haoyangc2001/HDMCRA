@@ -36,9 +36,9 @@ def test_config_class():
     assert cfg.algorithm.max_grad_norm == 0.5
     assert cfg.algorithm.reach_value_clip == 5000.0
     assert cfg.algorithm.learning_rate == 1e-3
-    assert cfg.algorithm.policy_learning_rate == 3e-4
+    assert cfg.algorithm.policy_learning_rate == 1e-4
     assert cfg.algorithm.energy_learning_rate == 1e-3
-    assert cfg.algorithm.reach_learning_rate == 1e-3
+    assert cfg.algorithm.reach_learning_rate == 3e-4
     assert cfg.algorithm.num_learning_epochs == 10
     assert cfg.algorithm.num_mini_batches == 8
     assert cfg.runner.experiment_name == 'ecfppo_go2'
@@ -107,12 +107,12 @@ def test_alg_with_config():
     assert alg.gamma_reach_init == 0.999
     assert alg.clip_param == 0.2
     assert alg.value_loss_coef == 1.0
-    assert alg.policy_learning_rate == 3e-4
+    assert alg.policy_learning_rate == 1e-4
     assert alg.energy_learning_rate == 1e-3
-    assert alg.reach_learning_rate == 1e-3
-    assert alg.policy_optimizer.param_groups[0]['lr'] == 3e-4
+    assert alg.reach_learning_rate == 3e-4
+    assert alg.policy_optimizer.param_groups[0]['lr'] == 1e-4
     assert alg.energy_optimizer.param_groups[0]['lr'] == 1e-3
-    assert alg.reach_optimizer.param_groups[0]['lr'] == 1e-3
+    assert alg.reach_optimizer.param_groups[0]['lr'] == 3e-4
     assert alg.anneal_entropy == True
     print("[PASS] test_alg_with_config")
 

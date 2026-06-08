@@ -267,11 +267,11 @@ class GO2EC_EFPPOCfgPPO(GO2HighLevelCfgPPO):
         max_grad_norm_energy = 0.1
         # Reach critic bootstrap value 的语义边界，防止少量 open 样本污染 target。
         reach_value_clip = 5000.0
-        # 默认 learning rate 保留为 critic fallback；D005 将 policy 单独降速，避免 actor mean 跑飞。
+        # 默认 learning rate 保留为 critic fallback；D005 将 policy 降速，D006 将 reach critic 降速。
         learning_rate = 1e-3
-        policy_learning_rate = 3e-4
+        policy_learning_rate = 1e-4
         energy_learning_rate = 1e-3
-        reach_learning_rate = 1e-3
+        reach_learning_rate = 3e-4
         # Number of learning epochs per update
         num_learning_epochs = 10
         # Number of mini-batches
