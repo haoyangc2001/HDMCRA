@@ -168,6 +168,9 @@ def train_ecfppo(args) -> None:
     alg = EC_EFPPO(
         actor_critic=actor_critic,
         learning_rate=train_cfg.algorithm.learning_rate,
+        policy_learning_rate=getattr(train_cfg.algorithm, 'policy_learning_rate', None),
+        energy_learning_rate=getattr(train_cfg.algorithm, 'energy_learning_rate', None),
+        reach_learning_rate=getattr(train_cfg.algorithm, 'reach_learning_rate', None),
         gamma_energy=train_cfg.algorithm.gamma_energy,
         gamma_reach_init=train_cfg.algorithm.gamma_reach_init,
         gamma_reach_final=train_cfg.algorithm.gamma_reach_final,
@@ -252,6 +255,7 @@ def train_ecfppo(args) -> None:
         # ---- Rollout ----
         for step in range(horizon):
             actions, log_probs, values_energy, values_reach = alg.act(obs)
+            action_mean = actor_critic.action_mean.detach()
 
             next_obs, next_g, next_h, dones, infos, next_energy, energy_consumption = env.step(actions)
 
@@ -278,6 +282,7 @@ def train_ecfppo(args) -> None:
                 next_energy=next_energy,
                 next_g=next_g,
                 next_h=next_h,
+                action_mean=action_mean,
             )
 
             obs = next_obs
@@ -342,6 +347,14 @@ def train_ecfppo(args) -> None:
                     f"done_mean {debug_stats.get('done_for_gae_mean', float('nan')):.4f} | "
                     f"energy_min_ratio {debug_stats.get('energy_min_ratio', float('nan')):.4f} | "
                     f"energy_neg_ratio {debug_stats.get('energy_negative_ratio', float('nan')):.4f} | "
+                    f"e_cons [{debug_stats.get('energy_consumption_mean', float('nan')):.3e}, {debug_stats.get('energy_consumption_max', float('nan')):.3e}] | "
+                    f"first_emin_step {debug_stats.get('first_energy_min_step_mean', float('nan')):.2f} | "
+                    f"act_clip_ratio {debug_stats.get('action_clip_ratio', float('nan')):.4f} | "
+                    f"act_abs [{debug_stats.get('action_abs_mean', float('nan')):.3e}, {debug_stats.get('action_abs_max', float('nan')):.3e}] | "
+                    f"act_mean_abs [{debug_stats.get('action_mean_abs_mean', float('nan')):.3e}, {debug_stats.get('action_mean_abs_max', float('nan')):.3e}] | "
+                    f"act_mean_clip_ratio {debug_stats.get('action_mean_clip_ratio', float('nan')):.4f} | "
+                    f"clipped_act_abs [{debug_stats.get('clipped_action_abs_mean', float('nan')):.3e}, {debug_stats.get('clipped_action_abs_max', float('nan')):.3e}] | "
+                    f"init_energy [{debug_stats.get('init_energy_min', float('nan')):.3e}, {debug_stats.get('init_energy_mean', float('nan')):.3e}, {debug_stats.get('init_energy_max', float('nan')):.3e}] | "
                     f"v_reach [{debug_stats.get('values_reach_min', float('nan')):.3e}, {debug_stats.get('values_reach_max', float('nan')):.3e}] | "
                     f"t_reach [{debug_stats.get('targets_reach_min', float('nan')):.3e}, {debug_stats.get('targets_reach_max', float('nan')):.3e}] | "
                     f"reach_clip_ratio {debug_stats.get('reach_value_clip_ratio', float('nan')):.4f} | "

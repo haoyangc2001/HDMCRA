@@ -72,6 +72,8 @@ class EC_EFPPO_Buffer:
         # 核心数据
         self.observations = torch.zeros(horizon + 1, num_envs, obs_dim, device=device)
         self.actions = torch.zeros(horizon, num_envs, act_dim, device=device)
+        # D005 诊断：记录 actor 分布均值，用于区分动作贴边来自均值还是采样噪声。
+        self.action_mean = torch.zeros(horizon, num_envs, act_dim, device=device)
         self.log_probs = torch.zeros(horizon, num_envs, device=device)
 
         # Energy value function 预测
@@ -144,6 +146,7 @@ class EC_EFPPO_Buffer:
         next_energy: torch.Tensor,
         next_g: torch.Tensor,
         next_h: torch.Tensor,
+        action_mean: torch.Tensor = None,
     ) -> None:
         """
         存储单步 transition 数据。
@@ -151,6 +154,7 @@ class EC_EFPPO_Buffer:
         Args:
             obs: [N, obs_dim] 当前高层决策前的状态 s_t 观测
             actions: [N, act_dim] 在 s_t 采样的高层动作 a_t
+            action_mean: [N, act_dim] actor 在 s_t 输出的动作分布均值，用于诊断动作贴边来源
             log_probs: [N] a_t 在 s_t 下的 log 概率
             values: [N] energy critic 在 s_t 的预测
             value_reach: [N] reach critic 在 s_t 的预测
@@ -167,6 +171,7 @@ class EC_EFPPO_Buffer:
         idx = self.step
         self.observations[idx] = obs
         self.actions[idx] = actions
+        self.action_mean[idx] = actions if action_mean is None else action_mean
         self.log_probs[idx] = log_probs
         self.values[idx] = values
         self.value_reach[idx] = value_reach
@@ -341,10 +346,32 @@ class EC_EFPPO_Buffer:
         self.debug_stats["targets_reach_min_h"] = self.h_values[min_t, min_env].detach().float().item()
         self.debug_stats["targets_reach_min_energy"] = self.energy[min_t, min_env].detach().float().item()
 
-        self.debug_stats["energy_min_ratio"] = (
-            energy_append <= energy_append.min() + 1e-6
-        ).float().mean().item()
+        energy_min_mask = energy_append <= energy_append.min() + 1e-6
+        self.debug_stats["energy_min_ratio"] = energy_min_mask.float().mean().item()
         self.debug_stats["energy_negative_ratio"] = (energy_append < 0).float().mean().item()
+        self.debug_stats.update(self._stats("energy_consumption", self.energy_consumption))
+        self.debug_stats.update(self._stats("init_energy", energy_append[0]))
+
+        # 只做诊断：记录每个环境第一次触到能量下界的时间步。
+        first_energy_min_step = torch.argmax(energy_min_mask.long(), dim=0)
+        never_min = ~energy_min_mask.any(dim=0)
+        first_energy_min_step = torch.where(
+            never_min,
+            torch.full_like(first_energy_min_step, energy_append.shape[0]),
+            first_energy_min_step,
+        ).float()
+        self.debug_stats.update(self._stats("first_energy_min_step", first_energy_min_step))
+
+        action_abs = self.actions.detach().abs()
+        action_mean_abs = self.action_mean.detach().abs()
+        clipped_action_abs = self.actions.detach().clamp(-1.0, 1.0).abs()
+        self.debug_stats.update(self._stats("action_abs", action_abs))
+        self.debug_stats.update(self._stats("action_mean_abs", action_mean_abs))
+        self.debug_stats.update(self._stats("clipped_action_abs", clipped_action_abs))
+        self.debug_stats["action_clip_ratio"] = (action_abs >= 1.0 - 1e-6).float().mean().item()
+        self.debug_stats["action_mean_clip_ratio"] = (
+            action_mean_abs >= 1.0 - 1e-6
+        ).float().mean().item()
 
     def _flat_view(self) -> EC_EFPPO_Batch:
         """将 [T, N, ...] 数据展平为 [T*N, ...]。"""
@@ -406,6 +433,9 @@ class EC_EFPPO:
         self,
         actor_critic: EC_EFPPO_ActorCritic,
         learning_rate: float = 3e-4,
+        policy_learning_rate: float = None,
+        energy_learning_rate: float = None,
+        reach_learning_rate: float = None,
         gamma_energy: float = 1.0,
         gamma_reach_init: float = 0.999,
         gamma_reach_final: float = 0.99999,
@@ -427,6 +457,15 @@ class EC_EFPPO:
 
         # 超参数
         self.learning_rate = learning_rate
+        self.policy_learning_rate = (
+            learning_rate if policy_learning_rate is None else policy_learning_rate
+        )
+        self.energy_learning_rate = (
+            learning_rate if energy_learning_rate is None else energy_learning_rate
+        )
+        self.reach_learning_rate = (
+            learning_rate if reach_learning_rate is None else reach_learning_rate
+        )
         self.gamma_energy = gamma_energy
         self.gamma_reach_init = gamma_reach_init
         self.gamma_reach_final = gamma_reach_final
@@ -447,13 +486,13 @@ class EC_EFPPO:
         # policy optimizer 必须同时管理 actor MLP 和动作分布 log_std；否则 entropy/std 不会更新。
         self.policy_params = list(self.actor_critic.actor.parameters()) + [self.actor_critic.log_std]
         self.policy_optimizer = optim.Adam(
-            self.policy_params, lr=learning_rate
+            self.policy_params, lr=self.policy_learning_rate
         )
         self.energy_optimizer = optim.Adam(
-            self.actor_critic.energy_critic.parameters(), lr=learning_rate
+            self.actor_critic.energy_critic.parameters(), lr=self.energy_learning_rate
         )
         self.reach_optimizer = optim.Adam(
-            self.actor_critic.reach_critic.parameters(), lr=learning_rate
+            self.actor_critic.reach_critic.parameters(), lr=self.reach_learning_rate
         )
 
         # Energy critic 目标值归一化器

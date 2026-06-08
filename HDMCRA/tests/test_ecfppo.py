@@ -192,6 +192,83 @@ def test_compute_advantages_shapes():
     print("[PASS] test_compute_advantages_shapes")
 
 
+def test_energy_action_debug_stats():
+    """D004: energy/action debug 字段只反映 rollout 统计，不改变训练逻辑。"""
+    device = torch.device('cpu')
+    num_envs = 2
+    horizon = 3
+    obs_dim = 3
+    act_dim = 2
+    buffer = EC_EFPPO_Buffer(
+        num_envs=num_envs, horizon=horizon, obs_shape=(obs_dim,),
+        action_shape=(act_dim,), device=device,
+    )
+
+    energies = [
+        torch.tensor([10.0, 20.0]),
+        torch.tensor([5.0, 10.0]),
+        torch.tensor([-400.0, 0.0]),
+        torch.tensor([-400.0, -1.0]),
+    ]
+    actions = [
+        torch.tensor([[0.0, 1.0], [1.2, -0.5]]),
+        torch.tensor([[-1.0, 0.2], [0.1, 0.2]]),
+        torch.tensor([[0.99, -1.01], [0.0, 0.0]]),
+    ]
+    consumptions = [
+        torch.tensor([1.0, 2.0]),
+        torch.tensor([3.0, 4.0]),
+        torch.tensor([5.0, 6.0]),
+    ]
+    action_means = [
+        torch.tensor([[0.2, 0.8], [1.1, -0.4]]),
+        torch.tensor([[-0.8, 0.3], [0.0, 0.1]]),
+        torch.tensor([[0.4, -1.2], [0.0, 0.0]]),
+    ]
+
+    for t in range(horizon):
+        buffer.add(
+            obs=torch.zeros(num_envs, obs_dim),
+            actions=actions[t],
+            log_probs=torch.zeros(num_envs),
+            values=torch.zeros(num_envs),
+            value_reach=torch.zeros(num_envs),
+            energy=energies[t],
+            energy_consumption=consumptions[t],
+            g_values=torch.ones(num_envs) * 500.0,
+            h_values=torch.ones(num_envs) * -300.0,
+            dones=torch.zeros(num_envs),
+            next_obs=torch.zeros(num_envs, obs_dim),
+            next_energy=energies[t + 1],
+            next_g=torch.ones(num_envs) * 500.0,
+            next_h=torch.ones(num_envs) * -300.0,
+            action_mean=action_means[t],
+        )
+
+    buffer.compute_advantages(
+        last_values_energy=torch.zeros(num_envs),
+        last_values_reach=torch.zeros(num_envs),
+        gamma_energy=0.99, gamma_reach=0.999,
+        gae_lambda=0.95, gamma_reach_init=0.999,
+    )
+
+    stats = buffer.debug_stats
+    assert abs(stats['energy_consumption_mean'] - 3.5) < 1e-6
+    assert abs(stats['energy_consumption_max'] - 6.0) < 1e-6
+    assert abs(stats['init_energy_min'] - 10.0) < 1e-6
+    assert abs(stats['init_energy_mean'] - 15.0) < 1e-6
+    assert abs(stats['init_energy_max'] - 20.0) < 1e-6
+    assert abs(stats['first_energy_min_step_mean'] - 3.0) < 1e-6
+    assert abs(stats['action_clip_ratio'] - (4.0 / 12.0)) < 1e-6
+    assert abs(stats['action_abs_mean'] - (6.2 / 12.0)) < 1e-6
+    assert abs(stats['clipped_action_abs_mean'] - (5.99 / 12.0)) < 1e-6
+    assert abs(stats['clipped_action_abs_max'] - 1.0) < 1e-6
+    assert abs(stats['action_mean_abs_mean'] - (5.3 / 12.0)) < 1e-6
+    assert abs(stats['action_mean_abs_max'] - 1.2) < 1e-6
+    assert abs(stats['action_mean_clip_ratio'] - (2.0 / 12.0)) < 1e-6
+    print("[PASS] test_energy_action_debug_stats")
+
+
 def test_reach_bootstrap_value_clip_bounds_targets():
     """P0: 极端 reach bootstrap 不应把 open 样本 target 拉到无语义量级。"""
     device = torch.device('cpu')
@@ -532,6 +609,7 @@ if __name__ == '__main__':
         test_buffer_add,
         test_buffer_clear,
         test_compute_advantages_shapes,
+        test_energy_action_debug_stats,
         test_reach_bootstrap_value_clip_bounds_targets,
         test_iter_batches,
         test_ecefppo_instantiation,

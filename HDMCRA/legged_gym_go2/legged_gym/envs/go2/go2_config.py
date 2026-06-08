@@ -194,6 +194,10 @@ class GO2HighLevelCfg(GO2RoughCfg):
         num_actions = 3       # [vx, vy, vyaw]
         high_level_action_repeat = 5  # number of low-level steps per high-level action
 
+    # D004: Pendulum 的 |u|^2 * 8 不能直接叠加到 Go2 的 3 维动作和 5 次低层重复。
+    # 归一化后，三维动作全饱和时每个高层步最大耗能约为 8，而不是 120。
+    energy_consumption_scale = 8.0 / (env.num_actions * env.high_level_action_repeat)
+
 class GO2HighLevelCfgPPO(LeggedRobotCfgPPO):
     """高层导航策略PPO配置"""
 
@@ -249,9 +253,9 @@ class GO2EC_EFPPOCfgPPO(GO2HighLevelCfgPPO):
         vf_coef = 1.0
         # 初始动作噪声标准差。EC-EFPPO 使用 log_std 参数化，这里仍以 std 语义配置。
         init_noise_std = 0.5
-        # log_std 限幅范围；[-2, 0] 对应 std 约 [0.135, 1.0]
+        # log_std 限幅范围；[-2, log(0.5)] 对应 std 约 [0.135, 0.5]
         log_std_min = -2.0
-        log_std_max = 0.0
+        log_std_max = -0.6931471805599453
         # Entropy coefficient。降低并退火，避免持续推大探索噪声。
         entropy_coef = 0.001
         # Whether to anneal entropy coefficient
@@ -263,8 +267,11 @@ class GO2EC_EFPPOCfgPPO(GO2HighLevelCfgPPO):
         max_grad_norm_energy = 0.1
         # Reach critic bootstrap value 的语义边界，防止少量 open 样本污染 target。
         reach_value_clip = 5000.0
-        # Learning rate — Plan A: 3e-4 → 1e-3（对齐基线）
+        # 默认 learning rate 保留为 critic fallback；D005 将 policy 单独降速，避免 actor mean 跑飞。
         learning_rate = 1e-3
+        policy_learning_rate = 3e-4
+        energy_learning_rate = 1e-3
+        reach_learning_rate = 1e-3
         # Number of learning epochs per update
         num_learning_epochs = 10
         # Number of mini-batches

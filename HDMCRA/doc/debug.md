@@ -16,6 +16,8 @@
 | D001 | resolved | P0 | 首轮全量训练 success 低平台，critic loss 量级异常，entropy/std 不更新 | `legged_gym_go2/logs/ecfppo_go2/20260605-102937/training.log` | 已修复 `std` 未进入 policy optimizer，并补充训练诊断指标 | 已被 D002 取代：`std` 能更新后出现无界增长，需改为 `log_std` 参数化并限制探索噪声 |
 | D002 | open | P0 | `std` 可更新后无界增长，entropy 推高探索噪声，success 早期峰值后坍塌 | `legged_gym_go2/logs/ecfppo_go2/20260605-231206/training.log` | 已用 `log_std -> exp` 和上界控制探索噪声；最新训练证明 std 已受控但 success 仍坍塌 | 转入 D003：定位 reach target/bootstrap 发散与 energy/done 饱和的因果关系 |
 | D003 | open | P0 | reach target/bootstrap 发散与 energy/done 饱和 | `legged_gym_go2/logs/ecfppo_go2/20260606-103051/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260606-230145/training.log` | 已确认极端 target 来自极少量 non-done/open bootstrap，已增加 reach bootstrap value 语义裁剪 | 跑 100-200 iter 大批量诊断训练，观察 `reach_clip_ratio`、`t_open_min`、`reach_loss` 和 success 是否改善；若仍失败，转向 energy/done 语义 |
+| D004 | open | P0 | energy/done 饱和导致训练语义退化 | `legged_gym_go2/logs/ecfppo_go2/20260607-094159/training.log` | 增加 energy/action 诊断字段，不改变训练逻辑，跑 100-200 iter 短训 | 若 energy 很快掉到下界且动作大量裁剪，优先校准能耗尺度；若 energy 正常但 critic 仍越界，再处理 reach critic 学习率/输出约束 |
+| D005 | open | P0 | 动作饱和导致策略-执行语义错配 | `legged_gym_go2/logs/ecfppo_go2/20260607-225408/training.log` | 已降低 `log_std_max` 到 `log(0.5)`，并新增动作均值/裁剪后动作诊断字段 | 跑 100 iter 短训，优先观察 `act_clip_ratio`、`action_mean_clip_ratio`、`act_mean_abs`、`clipped_act_abs` 和 `e_cons_mean` |
 
 ## 训练记录索引
 
@@ -26,6 +28,10 @@
 | 20260606-103051 | 2026-06-06 | `log_std` 上界、低 entropy 并退火后的训练 | 1-446 | 0.307 | 0.042 | `std` 在 iter 30 后稳定为 1.0；`done_mean≈0.993-0.998`；`energy_min_ratio≈0.972`；`reach_loss` 到 4.39e18 | 探索噪声已受控，但 reach target/bootstrap 发散和 energy/done 饱和仍主导训练失败 |
 | 20260606-143037 | 2026-06-06 | `--headless --num_envs 16 --max_iterations 50`，D003 分组 debug | 1-50 | 0.375 | 0.125 | 小规模未复现 reach loss 爆炸；`done_mean=0.9625-0.9981`；`energy_min_ratio=0.9602-0.9701`；`std_mean` 最终 0.9962 | 分组 debug 可用；energy/done 饱和稳定存在，早期最小 target 可来自极少量 non-done 样本 |
 | 20260606-230145 | 2026-06-06 | 大批量训练，包含 `open_ratio/t_done/t_open/tmin_src` 分组字段 | 1-1286 | 0.307 | 0.013 | `tmin_src done` 全为 0；`tmin_t` 全为 199；`t_done_min=-300` 稳定；`t_open_min` 最低约 -8.59e9；`open_ratio` 仅约 0.0023-0.0072 | 极端 reach target 不是 done 分支或原始 `g/h` 造成，而是极少量 non-done/open 样本从发散的 reach value bootstrap 进入 target |
+| 20260607-094159 | 2026-06-07 | `reach_value_clip=5000.0` 后完整 1500 iter 大批量训练 | 1-1500 | 0.278 | 0.038 | `t_open_min` 被限制到 -5000；`reach_loss` 最大约 1.92e11，未再到 1e12+；`reach_clip_ratio` 后期约 0.35-0.68；`done_mean≈0.996`；`energy_min_ratio≈0.973` | bootstrap target 爆炸已被抑制，但 energy/done 饱和和 reach critic 大量越界仍导致训练坍塌 |
+| 20260607-214857 | 2026-06-07 | 100 iter D004 诊断短训，新增 energy/action debug 字段 | 1-100 | 0.288 | 0.058 | `e_cons_mean` 平均约 116.16，最大恒为 120；`first_emin_step` 平均约 5.67；`act_clip_ratio` 平均约 0.953；`done_mean` 平均约 0.995；`energy_min_ratio` 平均约 0.972 | 能量约 5-6 个高层步触底，动作几乎全被裁剪，能耗尺度过大假设被直接验证 |
+| 20260607-225408 | 2026-06-07 | `energy_consumption_scale≈0.5333` 后 100 iter 短训 | 1-100 | 0.260 | 0.047 | `e_cons_max` 已降到 8；`first_emin_step` 平均约 77.99；但 `act_clip_ratio` 平均约 0.954，最终约 0.998；`reach_loss` 最大约 3.01e8，最终约 1.33e8 | 能耗尺度修复有效，但动作仍几乎全贴边，reach critic 继续越界；下一步应优先降低动作饱和/探索强度 |
+| 20260608-095413 | 2026-06-08 | `log_std_max=log(0.5)` 后 150 iter 短训，含动作均值诊断 | 1-150 | 0.314 | 0.029 | `std_mean≈0.5` 受控；`act_clip_ratio` 平均约 0.948；`act_mean_clip_ratio` 平均约 0.948；`act_mean_abs_mean` 后期到 5.89e3；`clipped_act_abs_mean` 平均约 0.974；`energy_loss` 最大约 9.20e4 | 动作贴边主要来自 actor mean 越界，不是探索噪声；下一步优先降低 policy 更新强度或约束 actor 输出均值 |
 
 ## 分析记录
 
@@ -262,6 +268,152 @@
   - 若 reach target 受控但 success 仍坍塌，下一步转向 energy/done 饱和：审查能耗尺度、`min_energy`、动作裁剪后能耗和 `calculate_indexs3()` earliest done 语义。
   - 若 `t_done_min` 也开始异常，下一步写最小张量用例检查 `calculate_reach_gae()` 的 done 分支时间对齐。
 
+### D004: energy/done 饱和导致训练语义退化
+
+- 日期：2026-06-07
+- 状态：open
+- 严重性：P0
+- 触发原因：`reach_value_clip=5000.0` 后完整 1500 iter 大批量训练仍未稳定，success 后期坍塌。
+- 相关日志：`legged_gym_go2/logs/ecfppo_go2/20260607-094159/training.log`
+- 现象：
+  - 共 1500 条 iter 记录和 150 条 debug 记录，训练完整保存 checkpoint。
+  - `success` 峰值为 0.278（iter 24），最终为 0.038；101-200 iter 均值约 0.145，之后长期降到约 0.036。
+  - `reach_loss` 最大约 1.92e11，最终约 1.11e11；相比上一轮 4.12e19 明显下降，且未再超过 1e12。
+  - `t_open_min` 和 `t_reach_min` 被限制在 -5000 附近，说明 open bootstrap target 爆炸已被抑制。
+  - `reach_clip_ratio` 后期常在 0.35-0.68，p50 约 0.4115，说明 reach critic 输出仍大量超过 `±5000` 语义边界。
+  - `done_mean` p50 约 0.9966，`energy_min_ratio` p50 约 0.9727，说明绝大多数 rollout 时间步仍被 done/energy 下界主导。
+- 初步假设：
+  - H1：当前主要矛盾已从 bootstrap target 无界爆炸转移为 energy/done 饱和导致训练语义退化。
+  - H2：高层能耗公式 `sum(clipped_action^2) * energy_consumption_scale * high_level_action_repeat` 在 Go2 三维动作和 repeat=5 下可能过大，导致能量很快掉到 `min_energy=-400`。
+  - H3：大量样本被 done mask 截断后，只有极少 open 样本承担 bootstrap，策略和 critic 得到的有效学习信号不足。
+  - H4：reach critic 大量越界仍需处理，但在 energy/done 饱和未诊断清楚前，不应继续调 `reach_value_clip`。
+- 代码链路：
+  - `HighLevelNavigationEnv.update_energy()`：按裁剪后的高层动作平方和乘以 `energy_consumption_scale` 与 `repeat` 扣能量。
+  - `HierarchicalGO2Env.step()`：当前 `high_level_action_repeat=5`，每个高层动作驱动 5 次底层执行。
+  - `EC_EFPPO_Buffer.compute_advantages()`：energy 序列进入 `calculate_indexs3()`，生成 `done_for_gae`，再影响 reach/energy/combined advantage。
+  - `train_ecfppo.py`：目前日志缺少每步能耗、初始能量、首次到达能量下界步数和动作裁剪比例，无法直接判断能量饱和的具体触发路径。
+- 证据：
+  - D003 修改后 `t_open_min` 不再进入 1e9 量级，说明 bootstrap target 污染已被限制。
+  - 但 `energy_min_ratio≈0.973` 与 `done_mean≈0.996` 基本没有改善，说明训练样本仍高度退化。
+  - 当前能耗最大值按配置可达 `3 * 8 * 5 = 120` 每高层步，而初始能量只在 `[-400, 800]` 之间均匀采样，horizon 为 200。
+- 结论：
+  - 当前不应继续跑 1500 iter，也不应继续调 `reach_value_clip`。
+  - 下一步应先增加 energy/action 观测字段，确认能量到底在第几步耗尽、每步耗能多大、动作是否大量被裁剪。
+- 改动：
+  - `rsl_rl/rsl_rl/algorithms/ecfppo.py`：新增 `energy_consumption_mean/max`、`first_energy_min_step_*`、`action_clip_ratio`、`action_abs_mean/max`、`init_energy_min/mean/max` 诊断字段。
+  - `legged_gym_go2/legged_gym/scripts/train_ecfppo.py`：在 debug 行输出 `e_cons`、`first_emin_step`、`act_clip_ratio` 和 `init_energy`。
+  - `tests/test_ecfppo.py`：新增确定性测试，验证能耗均值/最大值、初始能量统计、首次触底步数和动作裁剪比例。
+  - 该改动只增加诊断统计，不改变训练逻辑。
+- 验证：
+  - 已运行 `python3 -m py_compile rsl_rl/rsl_rl/algorithms/ecfppo.py legged_gym_go2/legged_gym/scripts/train_ecfppo.py tests/test_ecfppo.py`。
+  - 已运行 `conda run -n hdmcr python tests/test_ecfppo.py`，结果 18 passed。
+  - 已完成 100 iter 诊断短训：`logs/ecfppo_go2/20260607-214857/training.log`。
+  - 短训 `debug 00010` 显示 `e_cons [9.401e+01, 1.200e+02]`、`first_emin_step 6.68`、`act_clip_ratio 0.6824`、`init_energy [-3.996e+02, 1.989e+02, 7.992e+02]`。
+  - 完整 10 条 debug 统计显示：`energy_consumption_mean` 平均约 116.16，`energy_consumption_max` 恒为 120，`first_energy_min_step` 平均约 5.67，`action_clip_ratio` 平均约 0.953。
+  - 同一短训中 `done_mean` 平均约 0.995，`energy_min_ratio` 平均约 0.972，`open_ratio` 平均约 0.00484。
+- 后续动作：
+  - 已将 `energy_consumption_scale` 从默认 8.0 改为 `8.0 / (3 * 5) = 0.533333...`，用于把三维动作和 5 次低层重复归一化。
+  - 下一步只跑 100-200 iter 短训，验证 `e_cons` 最大值是否从 120 降到约 8，`first_energy_min_step` 是否明显变晚，`energy_min_ratio` 和 `done_mean` 是否下降。
+- 验证后下一步计划：
+  - 若 energy 饱和明显改善但 `act_clip_ratio` 仍接近 1，下一步再降低 `log_std_max` 或初始探索噪声。
+  - 若 energy 饱和改善且 success 不再坍塌，继续 300-500 iter 中等规模确认趋势。
+  - 若 energy 仍很快掉到 -400，则继续审查初始能量分布和能耗公式，而不是调 `reach_value_clip`。
+- 最新验证：
+  - 已完成能耗缩放后的 100 iter 短训：`legged_gym_go2/logs/ecfppo_go2/20260607-225408/training.log`。
+  - `e_cons_mean` 平均约 7.76，`e_cons_max` 恒为 8.0，说明能耗缩放配置已生效。
+  - `first_energy_min_step` 平均约 77.99，相比缩放前约 5.67 明显变晚，说明“几步内触底”的问题已缓解。
+  - `done_mean` 平均约 0.922，`energy_min_ratio` 平均约 0.612，明显低于缩放前约 0.995 和 0.972，但仍偏高。
+  - `open_ratio` 平均约 0.078，高于缩放前约 0.00484，说明有效 non-done/open 样本变多。
+  - `act_clip_ratio` 平均约 0.954，最终约 0.998，动作仍几乎全贴在边界，导致每步耗能仍接近最大值 8。
+  - `reach_clip_ratio` 平均约 0.367，`reach_loss` 最大约 3.01e8、最终约 1.33e8，reach critic 仍明显越界和不稳定。
+- 最新结论：
+  - D004 中“能耗尺度过大”的子问题已被有效修复。
+  - 当前剩余主矛盾变为：策略输出/探索导致动作饱和，进而保持高耗能；同时 reach critic 输出仍大量越过 `reach_value_clip` 语义边界。
+  - 下一步不应继续扩大训练轮数，而应先降低动作饱和来源，例如降低 `log_std_max` 或初始探索噪声，并继续用 100 iter 短训验证。
+- 最新验证后下一步计划：
+  - 优先把 `log_std_max` 从 0 降到负值（例如 `log(0.5)≈-0.693`），让最大标准差从 1.0 降到 0.5，目标是把 `act_clip_ratio` 从约 0.95 明显压低。
+  - 如果动作贴边下降后 `e_cons_mean` 低于 8 且 `done_mean/energy_min_ratio` 继续下降，再跑 300-500 iter 中等规模确认 success 是否不再早期坍塌。
+  - 如果动作贴边下降但 `reach_clip_ratio/reach_loss` 仍高，再单独处理 reach critic 的输出约束、学习率或损失尺度。
+
+
+### D005: 动作饱和导致策略-执行语义错配
+
+- 日期：2026-06-08
+- 状态：open
+- 严重性：P0
+- 触发原因：`energy_consumption_scale≈0.5333` 后，能耗尺度已修复，但动作仍几乎全部贴边。
+- 相关日志：`legged_gym_go2/logs/ecfppo_go2/20260607-225408/training.log`
+- 现象：
+  - `e_cons_max` 已从 120 降到 8，说明 D004 的能耗尺度修复生效。
+  - `first_energy_min_step` 平均约 77.99，明显晚于修复前约 5.67。
+  - `done_mean` 平均约 0.922，`energy_min_ratio` 平均约 0.612，均明显低于修复前，但仍偏高。
+  - `act_clip_ratio` 平均约 0.954，最终约 0.998，说明动作仍几乎全部被裁剪到 `[-1, 1]` 边界。
+  - `debug 00010` 时 `std_mean≈0.415`，但 `act_clip_ratio≈0.814`，说明动作贴边不一定只由标准差上限过大造成，也可能来自 actor 输出均值快速越界。
+  - `reach_loss` 最大约 3.01e8，最终约 1.33e8；`reach_clip_ratio` 平均约 0.367，reach critic 仍明显越界。
+- 初步假设：
+  - H1：当前主要矛盾从“能耗尺度过大”转移为“动作饱和”。
+  - H2：由于环境执行前会裁剪动作，PPO 记录的原始采样动作与环境实际执行的裁剪动作可能语义错配。
+  - H3：动作贴边可能来自探索噪声过大，也可能来自 actor mean 本身被策略更新推到边界外。
+  - H4：在动作饱和未缓解前，直接处理 reach critic 可能会被劣质 rollout 数据干扰。
+- 代码链路：
+  - `EC_EFPPO_ActorCritic.update_distribution()`：actor 输出 `mean`，策略分布为 `Normal(mean, std)`。
+  - `EC_EFPPO_ActorCritic.act()`：从未裁剪的 Normal 分布采样动作并计算 log probability。
+  - `HighLevelNavigationEnv.update_velocity_commands()` 和 `update_energy()`：环境执行和能耗计算前都会把动作裁剪到 `[-1, 1]`。
+  - `EC_EFPPO_Buffer.compute_advantages()`：已有 `action_clip_ratio` 只能说明原始动作是否贴边，不能区分是均值越界还是噪声采样越界。
+- 改动：
+  - `legged_gym_go2/legged_gym/envs/go2/go2_config.py`：将 `log_std_max` 从 `0.0` 改为 `-0.6931471805599453`，即最大 `std` 从 1.0 降为 0.5。
+  - `rsl_rl/rsl_rl/algorithms/ecfppo.py`：buffer 新增 `action_mean`，并记录 `action_abs`、`action_mean_abs`、`clipped_action_abs`、`action_clip_ratio` 和 `action_mean_clip_ratio`。
+  - `legged_gym_go2/legged_gym/scripts/train_ecfppo.py`：debug 行新增 `act_abs`、`act_mean_abs`、`act_mean_clip_ratio`、`clipped_act_abs`。
+  - `tests/test_ecfppo.py`：补充确定性测试，验证动作均值、原始动作和裁剪后动作统计。
+  - `tests/test_train_ecfppo.py`：同步 `log_std_max` 配置断言。
+- 验证：
+  - 已运行 `python3 -m py_compile rsl_rl/rsl_rl/algorithms/ecfppo.py legged_gym_go2/legged_gym/scripts/train_ecfppo.py legged_gym_go2/legged_gym/envs/go2/go2_config.py tests/test_ecfppo.py tests/test_train_ecfppo.py`。
+  - 已运行 `conda run -n hdmcr bash -lc 'export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"; python tests/test_ecfppo.py'`，结果 18 passed。
+  - 已运行 `conda run -n hdmcr bash -lc 'export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"; python tests/test_train_ecfppo.py'`，结果 12 passed。
+  - 已运行 `git diff --check`，无空白格式问题。
+- 后续动作：
+  - 跑 100 iter 短训，不要长训。
+  - 目标 1：`std_mean` 不应超过 0.5。
+  - 目标 2：`act_clip_ratio` 应明显低于 0.95；若仍高，查看 `action_mean_clip_ratio` 判断是否 actor mean 越界。
+  - 目标 3：`clipped_act_abs_mean` 和 `e_cons_mean` 应低于满动作/满耗能状态。
+- 验证后下一步计划：
+  - 若 `action_mean_clip_ratio` 低但 `act_clip_ratio` 高，下一步继续降低探索噪声或初始 `init_noise_std`。
+  - 若 `action_mean_clip_ratio` 高，下一步拆分 policy/critic 学习率，优先降低 policy learning rate。
+  - 若动作贴边缓解但 `reach_loss/reach_clip_ratio` 仍高，再进入 reach critic 专项处理。
+
+- 最新验证：
+  - 已完成 `log_std_max=log(0.5)` 后 150 iter 短训：`legged_gym_go2/logs/ecfppo_go2/20260608-095413/training.log`。
+  - `std_mean` 平均约 0.4999，最大为 0.5，说明标准差上限修改生效。
+  - `act_clip_ratio` 平均约 0.948，最终约 0.985；动作贴边问题没有解决。
+  - `act_mean_clip_ratio` 平均约 0.948，最终约 0.985，几乎等于 `act_clip_ratio`，说明贴边主要来自 actor mean 越界，而不是采样噪声。
+  - `act_mean_abs_mean` 平均约 1477，最终约 5889；`act_mean_abs_max` 最大约 81970，actor 输出均值已经严重跑飞。
+  - `clipped_act_abs_mean` 平均约 0.974，最终约 0.993，环境实际执行动作仍接近满动作。
+  - `e_cons_mean` 平均约 7.72，最大恒为 8.0，能耗仍接近满耗能。
+  - `success` 峰值为 0.314（iter 51），最终为 0.029，后期再次坍塌。
+  - `energy_loss` 最大约 9.20e4、最终约 7.23e4，energy critic 在后期明显变差。
+- 最新结论：
+  - 继续降低 `log_std_max` 的收益有限，因为主因不是探索标准差，而是 actor mean 被策略更新推到极大值。
+  - 下一步应优先处理 policy 更新强度或 actor 输出均值约束，而不是继续调 energy scale 或 reach value clip。
+- 最新验证后下一步计划：
+  - 首选方案：拆分 policy/energy/reach optimizer 学习率，先把 policy learning rate 从 1e-3 降到 3e-4，energy/reach 可暂时保留 1e-3，跑 100 iter 验证。
+  - 观察目标：`act_mean_clip_ratio` 明显下降，`act_mean_abs_mean` 不再进入百/千级，`clipped_act_abs_mean` 低于 0.9，`e_cons_mean` 低于满耗能 8。
+  - 若降低 policy learning rate 后 actor mean 仍跑飞，再考虑 actor 输出均值约束，例如对 mean 使用 tanh 边界或更严格的 action mean 正则。
+
+- 第二轮改动：
+  - `rsl_rl/rsl_rl/algorithms/ecfppo.py`：新增 `policy_learning_rate`、`energy_learning_rate`、`reach_learning_rate`，三个优化器分别使用对应学习率；未配置时回退到 `learning_rate`，保持旧调用兼容。
+  - `legged_gym_go2/legged_gym/scripts/train_ecfppo.py`：训练入口传入三路学习率配置。
+  - `legged_gym_go2/legged_gym/envs/go2/go2_config.py`：保留 `learning_rate=1e-3` 作为 critic fallback，新增 `policy_learning_rate=3e-4`、`energy_learning_rate=1e-3`、`reach_learning_rate=1e-3`。
+  - `tests/test_train_ecfppo.py`：新增三路学习率配置和 optimizer param group 断言。
+- 第二轮验证：
+  - 已运行 `python3 -m py_compile rsl_rl/rsl_rl/algorithms/ecfppo.py legged_gym_go2/legged_gym/scripts/train_ecfppo.py legged_gym_go2/legged_gym/envs/go2/go2_config.py tests/test_train_ecfppo.py`。
+  - 已运行 `conda run -n hdmcr bash -lc 'export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"; python tests/test_ecfppo.py'`，结果 18 passed。
+  - 已运行 `conda run -n hdmcr bash -lc 'export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"; python tests/test_train_ecfppo.py'`，结果 12 passed。
+  - 已运行 `git diff --check`，无空白格式问题。
+- 第二轮验证后下一步计划：
+  - 跑 100 iter 短训，检查 `act_mean_clip_ratio` 是否低于上一轮约 0.948，`act_mean_abs_mean` 是否不再快速进入百/千级。
+  - 若 policy 降速有效，再跑 300-500 iter 中等规模确认 success 是否不再后期坍塌。
+  - 若 policy 降速无效，再考虑 actor mean 结构约束或正则化。
+
 ## 决策记录
 
 - 2026-06-05：确认 `std` 未加入 policy optimizer 是确定实现 bug，已按最小修复处理。该改动不改变 EC-EFPPO 的 GAE/target 语义，只恢复参考实现中 policy 分布参数可训练的基本行为。
@@ -271,6 +423,13 @@
 - 2026-06-06：最新训练证明 `std` 已受控，但 reach target/bootstrap 发散与 energy/done 饱和仍导致训练坍塌。下一步只增加分组诊断统计，不改变训练语义。
 - 2026-06-06：已增加 D003 分组诊断统计并通过单元测试；50 iter 小规模短训完成。短训未复现 reach loss 爆炸，但确认 energy/done 饱和稳定存在，且新增分组字段可用于后续大规模日志判定。
 - 2026-06-07：20260606-230145 大批量日志证明极端 reach target 来自极少量 open/bootstrap 样本。已增加 `reach_value_clip=5000.0` 作为 bootstrap value 语义边界，并记录 `reach_clip_ratio` 用于下一轮诊断。
+- 2026-06-07：20260607-094159 完整训练证明 `reach_value_clip` 抑制了 target 爆炸，但 success 仍坍塌；下一步进入 D004，只增加 energy/action 诊断字段，不继续长训、不继续调 `reach_value_clip`。
+- 2026-06-07：已完成 D004 100 iter 诊断短训。完整统计显示平均每步耗能约 116、最大恒为 120、平均第 5.67 个高层步触到能量下界、动作裁剪比例约 0.953，能耗尺度过大假设被直接验证。
+- 2026-06-07：D004 第一轮配置实验：将 Go2 高层 `energy_consumption_scale` 设为 `8.0 / (3 * high_level_action_repeat) ≈ 0.5333`，目标是把单个高层步最大耗能从 120 降到约 8。
+- 2026-06-07：20260607-225408 短训确认能耗缩放生效，首次触底步数从约 5.67 推迟到约 77.99，open 样本比例从约 0.00484 提升到约 0.078；但动作裁剪比例仍约 0.954，下一步优先降低探索噪声/动作饱和。
+- 2026-06-08：进入 D005。先把 `log_std_max` 从 0.0 降到 `log(0.5)`，同时新增动作均值和裁剪后动作统计，用于区分动作贴边来自探索噪声还是 actor mean 越界。
+- 2026-06-08：20260608-095413 短训证明 `std` 已受控但动作贴边未改善，且 `act_mean_clip_ratio≈act_clip_ratio`；下一步优先降低 policy learning rate 或约束 actor mean。
+- 2026-06-08：D005 第二轮改动：拆分三路 optimizer 学习率，将 policy learning rate 从 1e-3 降到 3e-4，energy/reach learning rate 暂保留 1e-3，用于验证 actor mean 跑飞是否来自 policy 更新过强。
 
 ## 记录模板
 
