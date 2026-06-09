@@ -21,6 +21,28 @@ HDMCRA 已经完成 EC-EFPPO 的主体工程实现。当前工作重点是 **训
 
 不要把项目描述成“已完成验证”。当前更准确的描述是：**实现已完成，训练稳定性仍在验证中**。
 
+## 当前最新诊断焦点
+
+截至 2026-06-09，当前诊断主线是 D007：`actor mean`（策略动作均值）发散导致 `raw action`（原始采样动作）与 `clipped action`（环境实际执行动作）语义错配。
+
+已经确认的事实：
+
+- `log_std`（动作标准差的对数参数）已经受控，`std`（动作标准差）不再无界增长。
+- `reach_value_clip=5000.0` 已经抑制极端 reach bootstrap target，但不能单独解决 success 坍塌。
+- `energy_consumption_scale=8.0 / (num_actions * high_level_action_repeat)` 已经把单步最大高层能耗压到约 8，能量触底不再发生在最初 5-6 个高层步。
+- `policy_learning_rate=1e-4` 和 `reach_learning_rate=3e-4` 比最初统一 `1e-3` 更稳定。
+- `actor_mean_bound_coef=1e-2` 明显降低 `act_mean_clip_ratio`（动作均值越界比例）、`energy_loss`（能量价值损失）和 `reach_loss`（到达/避障价值损失）。
+- 但 `success`（成功率）仍会在短暂高峰后断崖下降，所以当前不要继续盲目加大正则或继续长训。
+
+当前下一步：跑 100-150 iter 诊断短训，分析 `reach_rate`（到达目标比例）、`safe_rate`（安全比例）、`unsafe_before_reach`（到达前不安全比例）、`no_reach`（未到达比例）和 `act_mean_clip_dim`（各动作维度均值越界比例）。
+
+如果接手时已经有新日志，优先判断：
+
+- `no_reach` 高：策略主要是不去目标，优先检查目标驱动、动作幅度是否被压小、advantage 是否给出有效到达信号。
+- `unsafe_before_reach` 高：策略能接近目标但安全失败，优先检查避障约束、`h` 值定义和动作方向。
+- 某个 `act_mean_clip_dim` 显著高：优先检查该动作维度的语义、归一化、速度范围和能耗/安全代价。
+- `reach_clip_ratio` 高：reach critic 输出仍越过语义边界，优先检查 reach critic 学习率、梯度裁剪或输出约束。
+
 ## 重要原则
 
 当前代码实现不能默认视为完全正确、严谨或设计合理。训练稳定性诊断阶段允许修改实现和设计，但必须基于严谨分析。
@@ -48,6 +70,11 @@ HDMCRA 已经完成 EC-EFPPO 的主体工程实现。当前工作重点是 **训
 - 当前实现是基于 JAX EC-EFPPO 参考实现、面向 Go2 任务的 PyTorch 适配版，不是逐行等价且已完成交叉验证的复刻版。
 - 当前 Go2 EC-EFPPO 默认网络是 `4x512 + elu`，不是早期设计中的 `2x256 + tanh`。
 - 当前 `gamma_energy` 是 `0.99`，不是原始默认值 `1.0`。
+- 当前 `log_std_max=-0.6931471805599453`，对应最大 `std≈0.5`。
+- 当前 `actor_mean_bound=1.0`、`actor_mean_bound_coef=1e-2`，用于惩罚 actor mean 超出动作边界。
+- 当前三路学习率为 `policy_learning_rate=1e-4`、`energy_learning_rate=1e-3`、`reach_learning_rate=3e-4`。
+- 当前 `reach_value_clip=5000.0`，用于限制 reach bootstrap value 的语义范围。
+- 当前 `debug_stats_interval=10`，训练日志每 10 iter 输出分组 debug 字段。
 - P0/P1 修复前的 success rate 和 energy consumption 统计只能作为历史调试参考。
 - 新的训练结论必须基于修复后的代码和最新训练日志。
 
@@ -113,9 +140,15 @@ legged_gym_go2/logs/ecfppo_go2/<timestamp>/training.log
 
 每次训练完成或中断后，需要检查：
 
-- `success`：趋势、峰值、最终值，是否震荡、坍缩或长期不升。
-- `cost`：成功轨迹是否更快到达，还是只出现随机成功。
-- `energy`：成功轨迹是否真的更省能，还是只反映初始状态更容易。
+- `success`（成功率）：趋势、峰值、最终值，是否震荡、坍缩或长期不升。
+- `reach_rate`（到达目标比例）：判断策略是否具备到达能力。
+- `safe_rate`（安全比例）：判断安全约束是否主要瓶颈。
+- `unsafe_before_reach`（到达前不安全比例）：判断失败是否来自提前碰撞/进入不安全区域。
+- `no_reach`（未到达比例）：判断失败是否主要来自不去目标。
+- `cost`（平均首次到达时间步）：成功轨迹是否更快到达，还是只出现随机成功。
+- `energy`（成功平均能耗）：成功轨迹是否真的更省能，还是只反映初始状态更容易。
+- `act_mean_clip_ratio`（动作均值越界比例）和 `act_mean_clip_dim`（各动作维度均值越界比例）：判断 actor mean 是否继续跑出动作边界，以及是否集中在某个维度。
+- `reach_clip_ratio`（reach value 裁剪比例）：判断 reach critic 是否仍大量越过语义边界。
 - `actor_loss`：是否有限，是否存在有效策略更新。
 - `energy_loss`：是否爆炸、坍缩，或处于稳定可学习量级。
 - `reach_loss`：是否爆炸、坍缩，或处于稳定可学习量级。
@@ -209,6 +242,16 @@ LD_LIBRARY_PATH=/pub/data/caohy/miniconda/envs/hdmcr/lib:$LD_LIBRARY_PATH \
 - success 和 energy consumption 统计必须保持 `g/h` post-step 序列与 energy 序列的对齐关系。
 - 超参数改动视为实验，必须记录旧值、新值和原因。
 - 算法语义改动属于高风险改动，必须同步测试和文档中的语义说明。
+
+## 新手接手步骤
+
+如果第一次接手本仓库，按以下顺序建立上下文：
+
+1. 先读 `README.md` 的“当前最新进展”和“训练诊断重点”，理解项目不是已完成收敛验证，而是在训练稳定性诊断阶段。
+2. 再读 `doc/debug.md` 的“新手接手摘要”“当前待分析问题”和 D007 记录，确认最近一次已经验证了什么、下一步为什么要看 success 分解。
+3. 打开最新 `legged_gym_go2/logs/ecfppo_go2/<timestamp>/training.log`，优先解析 `success/reach_rate/safe_rate/unsafe_before_reach/no_reach` 和 debug 行的动作分量。
+4. 如果要改代码，先在 `doc/debug.md` 写清楚假设和验证计划，再做最小改动。
+5. 如果只是继续训练，优先 100-150 iter 诊断短训，不要直接从不稳定 checkpoint 长训 1500 iter。
 
 ## 文档规则
 

@@ -9,6 +9,17 @@
 - 后续工作重点是基于训练日志和代码链路，判断算法语义、环境信号、超参数、网络结构或统计口径中是否存在不合理设计。
 - 任何改动都需要先形成可验证假设，再通过测试或训练结果验证。
 
+## 新手接手摘要
+
+- 当前项目不是“实现未完成”，而是“实现已完成但训练稳定性尚未验证通过”。接手后不要先大改结构，也不要直接长训 1500 iter。
+- 训练稳定性诊断已经从 D001 推进到 D007：先后处理了 `std`（动作标准差）未优化、`std` 无界增长、reach bootstrap target 发散、能耗尺度过大、动作饱和、reach critic 更新过强、actor mean 越界等问题。
+- 当前默认关键配置：`log_std_max=log(0.5)`、`policy_learning_rate=1e-4`、`energy_learning_rate=1e-3`、`reach_learning_rate=3e-4`、`reach_value_clip=5000.0`、`actor_mean_bound=1.0`、`actor_mean_bound_coef=1e-2`、`debug_stats_interval=10`。
+- 最新已完成短训 `20260609-121135` 证明 `actor_mean_bound_coef=1e-2` 能显著稳定动作、能耗和 reach critic，但 `success`（成功率）仍在高峰后断崖坍塌。
+- 最新代码已补充 success 分解诊断：`reach_rate`（到达目标比例）、`safe_rate`（安全比例）、`unsafe_before_reach`（到达前不安全比例）、`no_reach`（未到达比例）。
+- 最新代码已补充动作分量诊断：`act_mean_abs_dim`（各动作维度均值绝对值）、`act_mean_clip_dim`（各动作维度均值越界比例）、`clipped_act_abs_dim`（各动作维度实际执行动作绝对值）。
+- 当前正在/应当进行 100-150 iter 诊断短训。运行中日志 `20260609-144319` 的早期 debug 行已经显示第 0 维动作均值越界明显高于其他维度，这提示下一步很可能要检查 `[vx, vy, vyaw]` 中第 0 维速度命令的动作语义、边界正则和目标驱动。
+- 下一步不是直接把 `actor_mean_bound_coef` 加到 `3e-2`；应先基于新字段判断失败主要来自 `no_reach`（未到达）、`unsafe_before_reach`（到达前不安全），还是某个动作维度异常。
+
 ## 当前待分析问题
 
 | ID | 状态 | 严重性 | 问题 | 相关日志/文件 | 下一步 | 验证后下一步计划 |
@@ -19,7 +30,7 @@
 | D004 | open | P0 | energy/done 饱和导致训练语义退化 | `legged_gym_go2/logs/ecfppo_go2/20260607-094159/training.log` | 增加 energy/action 诊断字段，不改变训练逻辑，跑 100-200 iter 短训 | 若 energy 很快掉到下界且动作大量裁剪，优先校准能耗尺度；若 energy 正常但 critic 仍越界，再处理 reach critic 学习率/输出约束 |
 | D005 | open | P0 | 动作饱和导致策略-执行语义错配 | `legged_gym_go2/logs/ecfppo_go2/20260607-225408/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-113056/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-133653/training.log` | `policy_learning_rate=1e-4` 已显著改善动作贴边，但 success 未稳定，动作问题不再是唯一主因 | 转入 D006：优先处理 `reach critic` 输出越界和 `reach_clip_ratio` 偏高，不继续单纯降低 policy 学习率 |
 | D006 | open | P0 | reach critic 输出越界导致动作改善后仍训练坍塌 | `legged_gym_go2/logs/ecfppo_go2/20260608-133653/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-151933/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-221634/training.log`、`rsl_rl/rsl_rl/algorithms/ecfppo.py` | 中等规模续训证明 `reach_learning_rate=3e-4` 只短期有效，后期 actor mean 再次发散，动作/能耗/critic 联合恶化 | 不继续长训；下一步优先处理 actor mean 边界约束或边界正则，同时保持 reach 降速配置 |
-| D007 | open | P0 | actor mean 发散导致 raw action 与 clipped action 语义错配 | `legged_gym_go2/logs/ecfppo_go2/20260608-221634/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260609-080519/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260609-121135/training.log`、`rsl_rl/rsl_rl/algorithms/ecfppo.py`、`rsl_rl/rsl_rl/modules/actor_critic.py`、`legged_gym_go2/legged_gym/envs/go2/high_level_navigation_env.py` | `actor_mean_bound_coef=1e-2` 进一步稳定 energy/reach critic 和动作幅度，但 success 仍在高峰后断崖坍塌；已补 success 分解和动作分量诊断 | 跑 100-150 iter 诊断短训，观察 `reach_rate`、`safe_rate`、`unsafe_before_reach`、`no_reach`、`act_mean_clip_dim`，再决定是否调正则或改动作分布 |
+| D007 | open | P0 | actor mean 发散导致 raw action 与 clipped action 语义错配 | `legged_gym_go2/logs/ecfppo_go2/20260608-221634/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260609-080519/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260609-121135/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260609-144319/training.log`、`rsl_rl/rsl_rl/algorithms/ecfppo.py`、`rsl_rl/rsl_rl/modules/actor_critic.py`、`legged_gym_go2/legged_gym/envs/go2/high_level_navigation_env.py` | `actor_mean_bound_coef=1e-2` 进一步稳定 energy/reach critic 和动作幅度，但 success 仍在高峰后断崖坍塌；已补 success 分解和动作分量诊断；运行中短训早期显示第 0 维动作均值越界异常突出 | 完成 100-150 iter 诊断短训，重点判断 `no_reach` 是否主导失败，以及第 0 维动作是否长期越界；再决定调正则、改动作分布或检查动作语义 |
 
 ## 训练记录索引
 
@@ -40,6 +51,7 @@
 | 20260608-221634 | 2026-06-08 | 从 `20260608-151933/model_final.pt` 恢复，继续到 500 iter | 151-500 | 0.198 | 0.052 | `act_mean_clip_ratio` 平均约 0.934、后期约 0.973；`act_mean_abs_mean` 平均约 79.91，最大约 2063；`e_cons_mean` 平均约 7.65，`first_emin_step` 平均约 79.40；`energy_loss` 平均约 2.88e4，最大约 1.35e5；`reach_loss` 平均约 6.23e7，最大约 2.15e8 | 中等规模续训反证“继续训练会自然稳定”；短期 reach 降速有效，但长期 actor mean 发散和动作饱和重新主导训练失败 |
 | 20260609-080519 | 2026-06-09 | `actor_mean_bound_coef=1e-3` 后 200 iter 短训 | 1-200 | 0.353 | 0.028 | `mean_bound_loss` 平均约 1.643；`act_mean_clip_ratio` 平均约 0.642，较无正则续训 0.934 明显下降；`act_mean_abs_mean` 平均约 3.43，较 79.91 大幅下降；但 151-200 窗口 `act_mean_clip_ratio` 回升到约 0.814，`e_cons_mean` 回升到约 7.01，`reach_loss` 平均约 1.14e8 | D007 方向有效但系数偏弱；actor mean 仍会后期重新贴边，下一步应提高正则系数而不是继续长训 |
 | 20260609-121135 | 2026-06-09 | `actor_mean_bound_coef=1e-2` 后 200 iter 短训 | 1-200 | 0.289 | 0.011 | `energy_loss` 平均约 1.04e2，`reach_loss` 平均约 4.91e6，较 `1e-3` 明显下降；`act_mean_clip_ratio` 平均约 0.575，`act_mean_abs_mean` 平均约 1.86；但 iter 151-160 success 均值约 0.228 后，161-190 掉到约 0.012，且 critic 未同步爆炸 | 更强正则稳定了动作和 critic，但 success 仍存在策略/任务语义断崖；下一步应补 success 分解诊断，而不是立即继续加正则 |
+| 20260609-144319 | 2026-06-09 | 新增 success 分解和动作分量诊断后的运行中短训 | 运行中，文档更新时约 1-16 | 暂不定 | 暂不定 | 早期 `no_reach` 约 0.93-0.99，`unsafe_before_reach` 早期较低；debug 00010 显示 `act_mean_clip_dim=[0.9784, 0.0013, 0.0000]`，第 0 维 actor mean 几乎全越界；`reach_clip_ratio=0`，`std_mean≈0.497` | 运行中数据不能作为最终结论，但已经提示失败可能主要是未到达目标和第 0 维动作语义/约束异常；需等 100-150 iter 完成后确认 |
 
 ## 分析记录
 
@@ -609,6 +621,18 @@
   - 若 `no_reach` 高，优先判断动作是否被正则压得过小或目标驱动不足。
   - 若 `unsafe_before_reach` 高，优先检查避障/安全约束和高层动作方向。
   - 若某个 `act_mean_clip_dim` 长期显著高于其他维度，优先针对该动作维度检查动作语义、归一化和代价尺度。
+- 运行中短训早期快照：
+  - 日志：`legged_gym_go2/logs/ecfppo_go2/20260609-144319/training.log`。
+  - 文档更新时训练尚未完成，早期数据只能作为诊断方向，不能作为最终结论。
+  - 前 10-16 iter 中 `success` 仍低，`no_reach` 长期约 0.93-0.99，说明大部分环境还没有到达目标。
+  - `unsafe_before_reach` 早期通常低于 `no_reach`，说明当前早期失败更像“不去/到不了目标”，而不是“大量到达前不安全”。
+  - `debug 00010` 中 `reach_clip_ratio=0`、`std_mean≈0.497`，说明旧的 reach value 爆炸和 std 失控不是当前早期主导异常。
+  - `debug 00010` 中 `act_mean_clip_dim=[0.9784, 0.0013, 0.0000]`，第 0 维动作均值几乎全部越界，而第 1/2 维基本正常；这是下一步最重要的新线索。
+- 运行中短训完成后的判断分支：
+  - 若第 0 维 `act_mean_clip_dim` 持续接近 1，同时 `no_reach` 高，优先检查第 0 维动作 `[vx]` 的命令方向、尺度、裁剪、目标投影和能耗/正则压力。
+  - 若第 0 维只在早期越界、后期恢复，但 `no_reach` 仍高，优先检查 reach advantage 是否对目标接近提供有效梯度。
+  - 若 `unsafe_before_reach` 后期升高，说明策略开始接近目标但安全失败，应转向 `h` 值、安全约束和避障行为诊断。
+  - 若 `reach_clip_ratio` 后期重新升高，再回到 reach critic 输出约束、学习率或梯度裁剪诊断。
 
 ## 决策记录
 
@@ -638,6 +662,7 @@
 - 2026-06-09：D007 第二轮改动：将 `actor_mean_bound_coef` 从 `1e-3` 提高到 `1e-2`，保持 policy/reach/energy 学习率、std 上界和环境动作裁剪逻辑不变，用于验证更强边界正则能否长期压住 actor mean 越界。
 - 2026-06-09：20260609-121135 证明 `actor_mean_bound_coef=1e-2` 显著稳定动作、能耗和 reach critic，但 success 在 151-160 高峰后仍断崖坍塌；下一步不继续盲目加正则，先补 success 分解和动作分量诊断。
 - 2026-06-09：D007 第三轮改动：已补 success 分解诊断和动作分量诊断，且不改变训练逻辑；下一轮用 100-150 iter 短训判断 success 断崖主要来自未到达、不安全，还是某一动作维度异常。
+- 2026-06-09：运行中短训 `20260609-144319` 早期显示 `no_reach` 很高且第 0 维 `act_mean_clip_dim` 明显异常；该信息暂作为下一步分析方向，必须等待 100-150 iter 完成后再形成最终结论。
 
 ## 记录模板
 
