@@ -499,6 +499,27 @@ def test_actor_mean_bound_loss():
     print("[PASS] test_actor_mean_bound_loss")
 
 
+def test_policy_gae_direction_for_cost_like_advantages():
+    """D008: 更小的 reach-avoid advantage 应提高对应动作概率。"""
+    advantages_total = torch.tensor([-1.0, 1.0])
+    gae = EC_EFPPO._policy_gae_from_advantages(advantages_total)
+    assert gae[0].item() > 0.0
+    assert gae[1].item() < 0.0
+
+    log_probs = torch.tensor([0.0, 0.0], requires_grad=True)
+    old_log_probs = torch.zeros(2)
+    ratio = torch.exp(log_probs - old_log_probs)
+    loss_actor1 = ratio * gae
+    loss_actor2 = torch.clamp(ratio, 0.8, 1.2) * gae
+    policy_loss = -torch.min(loss_actor1, loss_actor2).mean()
+    policy_loss.backward()
+
+    # 梯度下降会增大低 cost-like advantage 样本的 log_prob，降低高样本的 log_prob。
+    assert log_probs.grad[0].item() < 0.0
+    assert log_probs.grad[1].item() > 0.0
+    print("[PASS] test_policy_gae_direction_for_cost_like_advantages")
+
+
 # ---- Test 9: 三路梯度独立性 ----
 def test_independent_gradient_flow():
     """验证 update 后三个子网络的参数确实发生了变化。"""
@@ -646,6 +667,7 @@ if __name__ == '__main__':
         test_ecefppo_act,
         test_ecefppo_update,
         test_actor_mean_bound_loss,
+        test_policy_gae_direction_for_cost_like_advantages,
         test_independent_gradient_flow,
         test_gamma_reach_annealing,
         test_entropy_annealing,

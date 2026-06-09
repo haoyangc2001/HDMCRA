@@ -525,6 +525,15 @@ class EC_EFPPO:
         """惩罚 actor mean 超出环境执行动作边界的部分。"""
         return torch.relu(action_mean.abs() - self.actor_mean_bound).pow(2).mean()
 
+    @staticmethod
+    def _policy_gae_from_advantages(advantages_total: torch.Tensor) -> torch.Tensor:
+        """将 cost-like reach-avoid advantage 转成 PPO reward-max loss 使用的方向。"""
+        normalized = (advantages_total - advantages_total.mean()) / (
+            advantages_total.std() + 1e-8
+        )
+        # advantages_total 来自 g_append=max(reach, -energy)，语义是越小越好。
+        return -normalized
+
     def init_storage(
         self,
         num_envs: int,
@@ -608,10 +617,9 @@ class EC_EFPPO:
             # 重要性采样比率
             ratio = torch.exp(log_probs - old_log_probs)
 
-            # 优势归一化（在 loss 内部进行，对应 JAX 版 _loss_fn_policy）
-            gae = (advantages_total - advantages_total.mean()) / (
-                advantages_total.std() + 1e-8
-            )
+            # advantages_total 是 reach-avoid/cost-like 信号，越小越好；
+            # policy loss 仍按 PPO reward-max 形式写，因此这里先取反。
+            gae = self._policy_gae_from_advantages(advantages_total)
 
             # PPO clip 目标
             loss_actor1 = ratio * gae

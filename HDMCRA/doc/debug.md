@@ -17,8 +17,8 @@
 - 最新已完成短训 `20260609-121135` 证明 `actor_mean_bound_coef=1e-2` 能显著稳定动作、能耗和 reach critic，但 `success`（成功率）仍在高峰后断崖坍塌。
 - 最新代码已补充 success 分解诊断：`reach_rate`（到达目标比例）、`safe_rate`（安全比例）、`unsafe_before_reach`（到达前不安全比例）、`no_reach`（未到达比例）。
 - 最新代码已补充动作分量诊断：`act_mean_abs_dim`（各动作维度均值绝对值）、`act_mean_clip_dim`（各动作维度均值越界比例）、`clipped_act_abs_dim`（各动作维度实际执行动作绝对值）。
-- 当前正在/应当进行 100-150 iter 诊断短训。运行中日志 `20260609-144319` 的早期 debug 行已经显示第 0 维动作均值越界明显高于其他维度，这提示下一步很可能要检查 `[vx, vy, vyaw]` 中第 0 维速度命令的动作语义、边界正则和目标驱动。
-- 下一步不是直接把 `actor_mean_bound_coef` 加到 `3e-2`；应先基于新字段判断失败主要来自 `no_reach`（未到达）、`unsafe_before_reach`（到达前不安全），还是某个动作维度异常。
+- 最新已完成短训 `20260609-144319` 显示 `success`（成功率）在中期短暂升高后断崖坍塌，最终失败由 `no_reach`（未到达）主导，而不是 `unsafe_before_reach`（到达前不安全）主导。
+- 当前进入 D008：`advantages_total`（组合优势）来自 `g_append=max(reach, -energy)`，语义更接近 reach-avoid/cost-like 的“越小越好”；已将 policy loss 使用的 advantage 标准化后取负，并补充梯度方向测试。
 
 ## 当前待分析问题
 
@@ -31,6 +31,7 @@
 | D005 | open | P0 | 动作饱和导致策略-执行语义错配 | `legged_gym_go2/logs/ecfppo_go2/20260607-225408/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-113056/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-133653/training.log` | `policy_learning_rate=1e-4` 已显著改善动作贴边，但 success 未稳定，动作问题不再是唯一主因 | 转入 D006：优先处理 `reach critic` 输出越界和 `reach_clip_ratio` 偏高，不继续单纯降低 policy 学习率 |
 | D006 | open | P0 | reach critic 输出越界导致动作改善后仍训练坍塌 | `legged_gym_go2/logs/ecfppo_go2/20260608-133653/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-151933/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-221634/training.log`、`rsl_rl/rsl_rl/algorithms/ecfppo.py` | 中等规模续训证明 `reach_learning_rate=3e-4` 只短期有效，后期 actor mean 再次发散，动作/能耗/critic 联合恶化 | 不继续长训；下一步优先处理 actor mean 边界约束或边界正则，同时保持 reach 降速配置 |
 | D007 | open | P0 | actor mean 发散导致 raw action 与 clipped action 语义错配 | `legged_gym_go2/logs/ecfppo_go2/20260608-221634/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260609-080519/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260609-121135/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260609-144319/training.log`、`rsl_rl/rsl_rl/algorithms/ecfppo.py`、`rsl_rl/rsl_rl/modules/actor_critic.py`、`legged_gym_go2/legged_gym/envs/go2/high_level_navigation_env.py` | `actor_mean_bound_coef=1e-2` 进一步稳定 energy/reach critic 和动作幅度，但 success 仍在高峰后断崖坍塌；已补 success 分解和动作分量诊断；运行中短训早期显示第 0 维动作均值越界异常突出 | 完成 100-150 iter 诊断短训，重点判断 `no_reach` 是否主导失败，以及第 0 维动作是否长期越界；再决定调正则、改动作分布或检查动作语义 |
+| D008 | open | P0 | EC-EFPPO policy advantage 符号方向与 reach-avoid cost-like 语义不一致 | `legged_gym_go2/logs/ecfppo_go2/20260609-144319/training.log`、`rsl_rl/rsl_rl/algorithms/ecfppo.py`、`rsl_rl/rsl_rl/algorithms/reach_avoid_ppo.py`、`legged_gym_go2/legged_gym/envs/go2/high_level_navigation_env.py` | 已确认旧 policy loss 会增大正 `advantages_total` 样本概率，但 `g/h` 定义和 Reach-Avoid PPO 基线均指向越小越好 | 已将 policy loss 使用的 `advantages_total` 标准化后取负；下一步跑短训验证 `reach_rate/no_reach/success` 是否改善 |
 
 ## 训练记录索引
 
@@ -51,7 +52,8 @@
 | 20260608-221634 | 2026-06-08 | 从 `20260608-151933/model_final.pt` 恢复，继续到 500 iter | 151-500 | 0.198 | 0.052 | `act_mean_clip_ratio` 平均约 0.934、后期约 0.973；`act_mean_abs_mean` 平均约 79.91，最大约 2063；`e_cons_mean` 平均约 7.65，`first_emin_step` 平均约 79.40；`energy_loss` 平均约 2.88e4，最大约 1.35e5；`reach_loss` 平均约 6.23e7，最大约 2.15e8 | 中等规模续训反证“继续训练会自然稳定”；短期 reach 降速有效，但长期 actor mean 发散和动作饱和重新主导训练失败 |
 | 20260609-080519 | 2026-06-09 | `actor_mean_bound_coef=1e-3` 后 200 iter 短训 | 1-200 | 0.353 | 0.028 | `mean_bound_loss` 平均约 1.643；`act_mean_clip_ratio` 平均约 0.642，较无正则续训 0.934 明显下降；`act_mean_abs_mean` 平均约 3.43，较 79.91 大幅下降；但 151-200 窗口 `act_mean_clip_ratio` 回升到约 0.814，`e_cons_mean` 回升到约 7.01，`reach_loss` 平均约 1.14e8 | D007 方向有效但系数偏弱；actor mean 仍会后期重新贴边，下一步应提高正则系数而不是继续长训 |
 | 20260609-121135 | 2026-06-09 | `actor_mean_bound_coef=1e-2` 后 200 iter 短训 | 1-200 | 0.289 | 0.011 | `energy_loss` 平均约 1.04e2，`reach_loss` 平均约 4.91e6，较 `1e-3` 明显下降；`act_mean_clip_ratio` 平均约 0.575，`act_mean_abs_mean` 平均约 1.86；但 iter 151-160 success 均值约 0.228 后，161-190 掉到约 0.012，且 critic 未同步爆炸 | 更强正则稳定了动作和 critic，但 success 仍存在策略/任务语义断崖；下一步应补 success 分解诊断，而不是立即继续加正则 |
-| 20260609-144319 | 2026-06-09 | 新增 success 分解和动作分量诊断后的运行中短训 | 运行中，文档更新时约 1-16 | 暂不定 | 暂不定 | 早期 `no_reach` 约 0.93-0.99，`unsafe_before_reach` 早期较低；debug 00010 显示 `act_mean_clip_dim=[0.9784, 0.0013, 0.0000]`，第 0 维 actor mean 几乎全越界；`reach_clip_ratio=0`，`std_mean≈0.497` | 运行中数据不能作为最终结论，但已经提示失败可能主要是未到达目标和第 0 维动作语义/约束异常；需等 100-150 iter 完成后确认 |
+| 20260609-144319 | 2026-06-09 | 新增 success 分解和动作分量诊断后的 200 iter 短训 | 1-200 | 0.289 | 0.011 | `161-200` 窗口 `no_reach≈0.981`、`unsafe_before_reach≈0.002`；最终 `act_mean_clip_ratio=0.7113`、`reach_clip_ratio=0.0235`，std 受控且 critic 未同步爆炸 | 失败主因是策略不去目标；结合代码链路转入 D008，优先检查 policy advantage 符号方向 |
+| 20260609-165333 | 2026-06-09 | D008 符号修复后 `--num_envs 64 --max_iterations 50` 冒烟训练 | 1-50 | 0.203 | 0.016 | 后 10 iter `success≈0.072`、`reach_rate≈0.122`、`no_reach≈0.878`；最终 `act_mean_clip_ratio=0.4093`、`reach_clip_ratio=0.0020` | 小规模结果噪声大，不能证明收敛；但端到端链路正常，且后段 target-drive 有早期改善迹象，下一步需要 4096 env 100-150 iter 复测 |
 
 ## 分析记录
 
@@ -634,6 +636,22 @@
   - 若 `unsafe_before_reach` 后期升高，说明策略开始接近目标但安全失败，应转向 `h` 值、安全约束和避障行为诊断。
   - 若 `reach_clip_ratio` 后期重新升高，再回到 reach critic 输出约束、学习率或梯度裁剪诊断。
 
+### D008: EC-EFPPO policy advantage 符号方向与 cost-like 语义不一致
+
+- 日期：2026-06-09
+- 状态：open
+- 严重性：P0
+- 触发原因：`20260609-144319` 完整 200 iter 短训在 `success` 短暂升高后断崖坍塌，失败由 `no_reach` 主导，critic 和 std 未同步爆炸。
+- 相关日志：`legged_gym_go2/logs/ecfppo_go2/20260609-144319/training.log`
+- 现象：峰值 `success=0.289` 出现在 iter 157，最终 `success=0.011`；`161-200` 窗口 `reach_rate≈0.019`、`unsafe_before_reach≈0.002`、`no_reach≈0.981`。
+- 初步假设：`advantages_total` 来自 `g_append=max(reach, -energy)`，语义是越小越好；旧 policy loss 按 reward-max PPO 方向增大正 advantage 样本概率，可能把策略推向更差的 reach-avoid/cost 方向。
+- 代码链路：`EC_EFPPO_Buffer.compute_advantages()` 构造 `g_append` 和 `advantages_total`；`EC_EFPPO.update()` 将 `advantages_total` 归一化后直接用于 PPO policy loss；`HighLevelNavigationEnv._compute_g_function()` 中目标内 `g=-300`、目标外更大，`_compute_h_function()` 中安全 `h=-300`、不安全 `h=300`。
+- 证据：小张量诊断显示旧 loss 对 `advantages_total=[-1, 1]` 的梯度会降低低值样本 log-prob、增大高值样本 log-prob；Reach-Avoid PPO 基线在 policy loss 前显式执行 `gae_batch=-adv_batch`。
+- 结论：旧 EC-EFPPO policy loss 符号方向与当前 reach-avoid cost-like 信号不一致，是 `no_reach` 主导坍塌的高优先级可验证原因。
+- 改动：`rsl_rl/rsl_rl/algorithms/ecfppo.py` 新增 `_policy_gae_from_advantages()`，对 `advantages_total` 标准化后取负；`tests/test_ecfppo.py` 新增梯度方向测试，要求更小的 cost-like advantage 提高对应动作概率。
+- 验证：`tests/test_ecfppo.py` 20/20 通过，`tests/test_ecfppo_gae.py` 11/11 通过，`tests/test_energy_state.py` 12/12 通过；D008 符号修复后 `20260609-165333` 50 iter 冒烟训练完成，峰值 `success=0.203`，后 10 iter `reach_rate≈0.122`、`no_reach≈0.878`。
+- 后续动作：小规模冒烟训练噪声大，不能证明收敛；下一步用 4096 env 跑 100-150 iter 诊断短训。如果 `reach_rate` 持续提升且 `no_reach` 下降，再观察 `unsafe_before_reach` 是否成为新瓶颈；如果仍不改善，回到动作语义和 rollout 分组 advantage 统计。
+
 ## 决策记录
 
 - 2026-06-05：确认 `std` 未加入 policy optimizer 是确定实现 bug，已按最小修复处理。该改动不改变 EC-EFPPO 的 GAE/target 语义，只恢复参考实现中 policy 分布参数可训练的基本行为。
@@ -663,6 +681,7 @@
 - 2026-06-09：20260609-121135 证明 `actor_mean_bound_coef=1e-2` 显著稳定动作、能耗和 reach critic，但 success 在 151-160 高峰后仍断崖坍塌；下一步不继续盲目加正则，先补 success 分解和动作分量诊断。
 - 2026-06-09：D007 第三轮改动：已补 success 分解诊断和动作分量诊断，且不改变训练逻辑；下一轮用 100-150 iter 短训判断 success 断崖主要来自未到达、不安全，还是某一动作维度异常。
 - 2026-06-09：运行中短训 `20260609-144319` 早期显示 `no_reach` 很高且第 0 维 `act_mean_clip_dim` 明显异常；该信息暂作为下一步分析方向，必须等待 100-150 iter 完成后再形成最终结论。
+- 2026-06-09：D008 确认 EC-EFPPO policy loss 使用的 `advantages_total` 符号方向与 reach-avoid cost-like 语义不一致；已将标准化后的 `advantages_total` 取负再送入 PPO policy loss，并用小张量梯度测试锁定方向。
 
 ## 记录模板
 

@@ -83,9 +83,11 @@ def test_observation_dimension():
     assert nav_env.num_high_level_obs == 41
 
 def test_energy_in_observation():
-    nav_env = HighLevelNavigationEnv(MockBaseEnv(), HighLevelNavigationConfig())
+    cfg = HighLevelNavigationConfig()
+    cfg.normalize_observations = False
+    nav_env = HighLevelNavigationEnv(MockBaseEnv(), cfg)
     obs, _, _, energy = nav_env.reset()
-    # reset() 已保证先采样 energy 再算观测，obs 末尾应与 energy 一致（不做归一化）
+    # 关闭归一化后，reset() 返回的 obs 末尾应与 raw energy 一致。
     assert torch.allclose(obs[:, -1], energy, atol=1e-5)
 
 def test_get_energy_methods():
@@ -95,10 +97,11 @@ def test_get_energy_methods():
     assert torch.allclose(nav_env.get_energy_consumption(), nav_env.energy_consumption)
 
 def test_reset_obs_energy_consistent():
-    """验证 reset 返回的 obs 末尾与返回的 energy 值一致（时序同步，不做归一化）。"""
-    nav_env = HighLevelNavigationEnv(MockBaseEnv(), HighLevelNavigationConfig())
+    """验证 reset 的 raw energy 先采样、再拼入 obs 的时序。"""
+    cfg = HighLevelNavigationConfig()
+    cfg.normalize_observations = False
+    nav_env = HighLevelNavigationEnv(MockBaseEnv(), cfg)
     obs, g_vals, h_vals, energy = nav_env.reset()
-    # obs 末尾应等于 energy（不做归一化，与 JAX 参考一致）
     assert torch.allclose(obs[:, -1], energy, atol=1e-5), \
         f"obs energy {obs[:, -1]} != actual energy {energy}"
     # 多次 reset 应每次 energy 都不同（概率极高）
