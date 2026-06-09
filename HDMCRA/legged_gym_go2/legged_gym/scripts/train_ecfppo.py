@@ -22,7 +22,7 @@ import torch
 
 from legged_gym.envs.go2.hierarchical_go2_env import HierarchicalGO2Env
 from legged_gym.envs.go2.go2_config import GO2HighLevelCfg, GO2EC_EFPPOCfgPPO
-from legged_gym.utils import get_args
+from legged_gym.utils import get_args, get_load_path
 from legged_gym.utils.helpers import update_cfg_from_args
 
 from rsl_rl.algorithms.ecfppo import EC_EFPPO
@@ -140,6 +140,14 @@ def train_ecfppo(args) -> None:
 
     env_cfg, train_cfg = update_cfg_from_args(env_cfg, train_cfg, args)
 
+    if train_cfg.runner.resume and not getattr(train_cfg.runner, "resume_path", None):
+        log_root = os.path.join("logs", train_cfg.runner.experiment_name)
+        train_cfg.runner.resume_path = get_load_path(
+            log_root,
+            getattr(train_cfg.runner, "load_run", -1),
+            getattr(train_cfg.runner, "checkpoint", -1),
+        )
+
     device = torch.device(args.rl_device)
     env = create_env(env_cfg, train_cfg, args, device)
 
@@ -180,6 +188,8 @@ def train_ecfppo(args) -> None:
         clip_param=train_cfg.algorithm.clip_eps,
         value_loss_coef=train_cfg.algorithm.vf_coef,
         entropy_coef=train_cfg.algorithm.entropy_coef,
+        actor_mean_bound=getattr(train_cfg.algorithm, 'actor_mean_bound', 1.0),
+        actor_mean_bound_coef=getattr(train_cfg.algorithm, 'actor_mean_bound_coef', 0.0),
         max_grad_norm=train_cfg.algorithm.max_grad_norm,
         max_grad_norm_energy=max_grad_norm_energy,
         reach_value_clip=getattr(train_cfg.algorithm, 'reach_value_clip', None),
@@ -189,7 +199,11 @@ def train_ecfppo(args) -> None:
     alg.init_storage(num_envs, horizon, obs_shape, action_shape)
 
     # ---- 恢复 checkpoint（如果指定）----
-    if train_cfg.runner.resume and os.path.exists(train_cfg.runner.resume_path):
+    if train_cfg.runner.resume:
+        if not train_cfg.runner.resume_path or not os.path.exists(train_cfg.runner.resume_path):
+            raise FileNotFoundError(
+                f"Resume enabled but checkpoint not found: {train_cfg.runner.resume_path}"
+            )
         print(f"Resuming from {train_cfg.runner.resume_path}")
         ckpt = torch.load(train_cfg.runner.resume_path, map_location=device)
         actor_critic.load_state_dict(ckpt["actor_critic"])
@@ -330,6 +344,7 @@ def train_ecfppo(args) -> None:
                 f"actor_loss {loss_dict['actor_loss']:.5f} | "
                 f"energy_loss {loss_dict['energy_loss']:.5f} | "
                 f"reach_loss {loss_dict['reach_loss']:.5f} | "
+                f"mean_bound_loss {loss_dict.get('mean_bound_loss', 0.0):.5f} | "
                 f"entropy {loss_dict['entropy_loss']:.4f} | "
                 f"gamma_reach {gamma_reach:.6f} | "
                 f"ent_coef {entropy_coef:.5f} | "

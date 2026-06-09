@@ -445,6 +445,8 @@ class EC_EFPPO:
         clip_param: float = 0.2,
         value_loss_coef: float = 0.5,
         entropy_coef: float = 0.01,
+        actor_mean_bound: float = 1.0,
+        actor_mean_bound_coef: float = 0.0,
         max_grad_norm: float = 0.5,
         max_grad_norm_energy: float = None,
         reach_value_clip: float = None,
@@ -475,6 +477,8 @@ class EC_EFPPO:
         self.clip_param = clip_param
         self.value_loss_coef = value_loss_coef
         self.entropy_coef = entropy_coef
+        self.actor_mean_bound = float(actor_mean_bound)
+        self.actor_mean_bound_coef = float(actor_mean_bound_coef)
         self.max_grad_norm = max_grad_norm
         # Energy critic 使用更严格的梯度裁剪，防止 loss 爆炸
         # 如果未指定，默认使用 max_grad_norm 的 1/5
@@ -501,6 +505,10 @@ class EC_EFPPO:
         self.energy_target_rms = RunningMeanStd(shape=(), device=self.device)
 
         self.buffer = None
+
+    def _actor_mean_bound_loss(self, action_mean: torch.Tensor) -> torch.Tensor:
+        """惩罚 actor mean 超出环境执行动作边界的部分。"""
+        return torch.relu(action_mean.abs() - self.actor_mean_bound).pow(2).mean()
 
     def init_storage(
         self,
@@ -561,6 +569,7 @@ class EC_EFPPO:
         energy_loss_acc = 0.0
         reach_loss_acc = 0.0
         entropy_loss_acc = 0.0
+        mean_bound_loss_acc = 0.0
         batch_count = 0
 
         for batch in self.buffer.iter_batches(
@@ -596,8 +605,15 @@ class EC_EFPPO:
             )
             policy_loss = -torch.min(loss_actor1, loss_actor2).mean()
 
-            # 总策略损失 = policy_loss - entropy_coef * entropy
-            actor_total_loss = policy_loss - entropy_coef * entropy
+            # 总策略损失 = PPO policy loss - entropy bonus + actor mean 边界正则。
+            # 正则只惩罚均值越过环境执行边界的部分，不改变采样分布定义。
+            action_mean = self.actor_critic.action_mean
+            mean_bound_loss = self._actor_mean_bound_loss(action_mean)
+            actor_total_loss = (
+                policy_loss
+                - entropy_coef * entropy
+                + self.actor_mean_bound_coef * mean_bound_loss
+            )
 
             self.policy_optimizer.zero_grad()
             actor_total_loss.backward()
@@ -658,6 +674,7 @@ class EC_EFPPO:
             energy_loss_acc += energy_loss.item()
             reach_loss_acc += reach_loss.item()
             entropy_loss_acc += entropy.item()
+            mean_bound_loss_acc += mean_bound_loss.item()
             batch_count += 1
 
         # 清空缓冲区
@@ -669,6 +686,7 @@ class EC_EFPPO:
             "energy_loss": energy_loss_acc / num_updates,
             "reach_loss": reach_loss_acc / num_updates,
             "entropy_loss": entropy_loss_acc / num_updates,
+            "mean_bound_loss": mean_bound_loss_acc / num_updates,
         }
 
     @staticmethod

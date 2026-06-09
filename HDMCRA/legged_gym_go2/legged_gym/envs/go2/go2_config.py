@@ -258,6 +258,9 @@ class GO2EC_EFPPOCfgPPO(GO2HighLevelCfgPPO):
         log_std_max = -0.6931471805599453
         # Entropy coefficient。降低并退火，避免持续推大探索噪声。
         entropy_coef = 0.001
+        # D007: actor mean 边界正则，缓解 raw action mean 与环境裁剪执行动作的语义错配。
+        actor_mean_bound = 1.0
+        actor_mean_bound_coef = 1e-2
         # Whether to anneal entropy coefficient
         anneal_entropy = True
         # Max gradient norm

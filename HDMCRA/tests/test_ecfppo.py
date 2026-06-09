@@ -462,12 +462,35 @@ def test_ecefppo_update():
     assert 'energy_loss' in loss_dict
     assert 'reach_loss' in loss_dict
     assert 'entropy_loss' in loss_dict
+    assert 'mean_bound_loss' in loss_dict
+    assert loss_dict['mean_bound_loss'] >= 0.0
     assert all(np.isfinite(v) for v in loss_dict.values())
     print(f"  Losses: actor={loss_dict['actor_loss']:.4f}, "
           f"energy={loss_dict['energy_loss']:.4f}, "
           f"reach={loss_dict['reach_loss']:.4f}, "
           f"entropy={loss_dict['entropy_loss']:.4f}")
     print("[PASS] test_ecefppo_update")
+
+
+def test_actor_mean_bound_loss():
+    """D007: actor mean 边界正则只惩罚越过动作执行边界的均值。"""
+    model = EC_EFPPO_ActorCritic(
+        num_actor_obs=4, num_critic_obs=4, num_actions=3,
+        hidden_dim=8, num_hidden_layers=2,
+    )
+    alg = EC_EFPPO(
+        actor_critic=model, actor_mean_bound=1.0,
+        actor_mean_bound_coef=1e-2, device='cpu',
+    )
+
+    inside = torch.tensor([[0.0, 0.5, -1.0]])
+    outside = torch.tensor([[2.0, -3.0, 1.5]])
+
+    assert alg._actor_mean_bound_loss(inside).item() == 0.0
+    assert alg._actor_mean_bound_loss(outside).item() > 0.0
+    assert alg.actor_mean_bound == 1.0
+    assert alg.actor_mean_bound_coef == 1e-2
+    print("[PASS] test_actor_mean_bound_loss")
 
 
 # ---- Test 9: 三路梯度独立性 ----
@@ -616,6 +639,7 @@ if __name__ == '__main__':
         test_policy_optimizer_updates_std,
         test_ecefppo_act,
         test_ecefppo_update,
+        test_actor_mean_bound_loss,
         test_independent_gradient_flow,
         test_gamma_reach_annealing,
         test_entropy_annealing,
