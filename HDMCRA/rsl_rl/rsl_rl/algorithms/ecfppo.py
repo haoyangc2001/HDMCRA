@@ -130,6 +130,18 @@ class EC_EFPPO_Buffer:
             })
         return stats
 
+    @staticmethod
+    def _dim_stats(prefix: str, tensor: torch.Tensor) -> Dict[str, float]:
+        """按动作维度记录均值，避免总均值掩盖某一维异常。"""
+        values = tensor.detach().float()
+        if values.dim() < 3:
+            return {}
+        flat = values.reshape(-1, values.size(-1))
+        return {
+            f"{prefix}_dim{dim}": flat[:, dim].mean().item()
+            for dim in range(flat.size(-1))
+        }
+
     def add(
         self,
         obs: torch.Tensor,
@@ -365,13 +377,16 @@ class EC_EFPPO_Buffer:
         action_abs = self.actions.detach().abs()
         action_mean_abs = self.action_mean.detach().abs()
         clipped_action_abs = self.actions.detach().clamp(-1.0, 1.0).abs()
+        action_clip_mask = action_abs >= 1.0 - 1e-6
+        action_mean_clip_mask = action_mean_abs >= 1.0 - 1e-6
         self.debug_stats.update(self._stats("action_abs", action_abs))
         self.debug_stats.update(self._stats("action_mean_abs", action_mean_abs))
         self.debug_stats.update(self._stats("clipped_action_abs", clipped_action_abs))
-        self.debug_stats["action_clip_ratio"] = (action_abs >= 1.0 - 1e-6).float().mean().item()
-        self.debug_stats["action_mean_clip_ratio"] = (
-            action_mean_abs >= 1.0 - 1e-6
-        ).float().mean().item()
+        self.debug_stats.update(self._dim_stats("action_mean_abs_mean", action_mean_abs))
+        self.debug_stats.update(self._dim_stats("action_mean_clip_ratio", action_mean_clip_mask.float()))
+        self.debug_stats.update(self._dim_stats("clipped_action_abs_mean", clipped_action_abs))
+        self.debug_stats["action_clip_ratio"] = action_clip_mask.float().mean().item()
+        self.debug_stats["action_mean_clip_ratio"] = action_mean_clip_mask.float().mean().item()
 
     def _flat_view(self) -> EC_EFPPO_Batch:
         """将 [T, N, ...] 数据展平为 [T*N, ...]。"""

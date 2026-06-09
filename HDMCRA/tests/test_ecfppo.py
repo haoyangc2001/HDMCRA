@@ -266,6 +266,12 @@ def test_energy_action_debug_stats():
     assert abs(stats['action_mean_abs_mean'] - (5.3 / 12.0)) < 1e-6
     assert abs(stats['action_mean_abs_max'] - 1.2) < 1e-6
     assert abs(stats['action_mean_clip_ratio'] - (2.0 / 12.0)) < 1e-6
+    assert abs(stats['action_mean_abs_mean_dim0'] - (2.5 / 6.0)) < 1e-6
+    assert abs(stats['action_mean_abs_mean_dim1'] - (2.8 / 6.0)) < 1e-6
+    assert abs(stats['action_mean_clip_ratio_dim0'] - (1.0 / 6.0)) < 1e-6
+    assert abs(stats['action_mean_clip_ratio_dim1'] - (1.0 / 6.0)) < 1e-6
+    assert abs(stats['clipped_action_abs_mean_dim0'] - (3.09 / 6.0)) < 1e-6
+    assert abs(stats['clipped_action_abs_mean_dim1'] - (2.9 / 6.0)) < 1e-6
     print("[PASS] test_energy_action_debug_stats")
 
 

@@ -64,34 +64,30 @@ def create_env(env_cfg, train_cfg, args, device) -> HierarchicalVecEnv:
     return HierarchicalVecEnv(base_env)
 
 
-def compute_reach_avoid_success_rate(
+def compute_reach_avoid_metrics(
     g_sequence: torch.Tensor,
     h_sequence: torch.Tensor,
     energy_sequence: torch.Tensor = None,
 ):
     """
-    计算 Reach-Avoid 任务的成功率、执行成本和能量消耗。
-
-    在原有基础上增加能量消耗统计。
+    计算 Reach-Avoid 任务指标，并拆分 success 失败来源。
 
     Args:
-        g_sequence: [T, N] reach 值序列
-        h_sequence: [T, N] 安全约束值序列
-        energy_sequence: [T+1, N] 能量序列（可选），用于计算成功环境的平均能量消耗
+        g_sequence: [T, N] reach 值序列，g < 0 表示到达目标
+        h_sequence: [T, N] 安全约束值序列，h >= 0 表示不安全
+        energy_sequence: [T+1, N] 能量序列（可选）
 
     Returns:
-        success_rate: 成功率
-        execution_cost: 成功环境的平均到达时间步
-        avg_energy_consumption: 成功环境的平均能量消耗（如果提供 energy_sequence）
+        dict: success、reach、安全和能量消耗统计。
     """
     with torch.no_grad():
         time_steps, num_envs = g_sequence.shape
 
         g_negative = g_sequence < 0
-        has_success = g_negative.any(dim=0)
+        has_reach = g_negative.any(dim=0)
         first_success = torch.argmax(g_negative.long(), dim=0)
         first_indices = torch.where(
-            has_success,
+            has_reach,
             first_success,
             torch.full((num_envs,), time_steps, device=g_sequence.device, dtype=torch.long),
         )
@@ -100,9 +96,14 @@ def compute_reach_avoid_success_rate(
         before_success = time_index < first_indices.unsqueeze(0)
         h_violation = (h_sequence >= 0) & before_success
         safe_before = ~h_violation.any(dim=0)
-        success = has_success & safe_before
+        success = has_reach & safe_before
 
         success_rate = success.float().mean().item()
+        reach_rate = has_reach.float().mean().item()
+        safe_rate = safe_before.float().mean().item()
+        unsafe_before_reach_rate = (has_reach & ~safe_before).float().mean().item()
+        no_reach_rate = (~has_reach).float().mean().item()
+        unsafe_rate = (~safe_before).float().mean().item()
 
         success_first_indices = first_indices[success]
         if success.sum().item() > 0:
@@ -110,23 +111,54 @@ def compute_reach_avoid_success_rate(
         else:
             execution_cost = 0.0
 
-        # 能量消耗统计
         avg_energy_consumption = 0.0
         if energy_sequence is not None and success.sum().item() > 0:
             # g/h 序列长度为 T，对应 rollout 中每一步后的状态；energy 序列长度为 T+1，
             # 其中 energy[0] 是初始状态，energy[t+1] 才是执行第 t 步动作后的能量。
-            # 因此第一次到达目标的 g 索引 first_indices 需要映射到 energy 的 first_indices + 1。
-            init_energy = energy_sequence[0]  # [N]
+            init_energy = energy_sequence[0]
             energy_indices = torch.where(
-                has_success,
+                has_reach,
                 first_indices + 1,
                 torch.full_like(first_indices, time_steps),
             )
-            reach_energy = energy_sequence[energy_indices, torch.arange(num_envs)]  # [N]
-            energy_used = init_energy - reach_energy  # [N] 正值表示消耗
+            reach_energy = energy_sequence[energy_indices, torch.arange(num_envs)]
+            energy_used = init_energy - reach_energy
             avg_energy_consumption = energy_used[success].mean().item()
 
-        return success_rate, execution_cost, avg_energy_consumption
+        return {
+            "success_rate": success_rate,
+            "reach_rate": reach_rate,
+            "safe_rate": safe_rate,
+            "unsafe_before_reach_rate": unsafe_before_reach_rate,
+            "no_reach_rate": no_reach_rate,
+            "unsafe_rate": unsafe_rate,
+            "execution_cost": execution_cost,
+            "avg_energy_consumption": avg_energy_consumption,
+        }
+
+
+def compute_reach_avoid_success_rate(
+    g_sequence: torch.Tensor,
+    h_sequence: torch.Tensor,
+    energy_sequence: torch.Tensor = None,
+):
+    """
+    兼容旧接口：返回 success_rate、execution_cost 和 avg_energy_consumption。
+    """
+    metrics = compute_reach_avoid_metrics(g_sequence, h_sequence, energy_sequence)
+    return (
+        metrics["success_rate"],
+        metrics["execution_cost"],
+        metrics["avg_energy_consumption"],
+    )
+
+
+def _format_debug_dim_values(debug_stats, prefix: str, num_dims: int, fmt: str = ".3e") -> str:
+    values = []
+    for dim in range(num_dims):
+        value = float(debug_stats.get(f"{prefix}_dim{dim}", float("nan")))
+        values.append(format(value, fmt))
+    return "[" + ", ".join(values) + "]"
 
 
 def train_ecfppo(args) -> None:
@@ -320,11 +352,14 @@ def train_ecfppo(args) -> None:
         )
 
         # ---- 成功率和能量消耗 ----
-        success_rate, execution_cost, avg_energy = compute_reach_avoid_success_rate(
+        success_metrics = compute_reach_avoid_metrics(
             alg.buffer.g_values[1:],       # [T, N] g 序列（跳过初始状态）
             alg.buffer.h_values[1:],       # [T, N] h 序列（跳过初始状态）
             energy_sequence=alg.buffer.energy,  # [T+1, N] 完整能量序列
         )
+        success_rate = success_metrics['success_rate']
+        execution_cost = success_metrics['execution_cost']
+        avg_energy = success_metrics['avg_energy_consumption']
         debug_stats = dict(getattr(alg.buffer, 'debug_stats', {}))
 
         # ---- 三路 PPO 更新 ----
@@ -341,6 +376,10 @@ def train_ecfppo(args) -> None:
                 f"success {success_rate:.3f} | "
                 f"cost {execution_cost:.1f} | "
                 f"energy {avg_energy:.1f} | "
+                f"reach_rate {success_metrics['reach_rate']:.3f} | "
+                f"safe_rate {success_metrics['safe_rate']:.3f} | "
+                f"unsafe_before_reach {success_metrics['unsafe_before_reach_rate']:.3f} | "
+                f"no_reach {success_metrics['no_reach_rate']:.3f} | "
                 f"actor_loss {loss_dict['actor_loss']:.5f} | "
                 f"energy_loss {loss_dict['energy_loss']:.5f} | "
                 f"reach_loss {loss_dict['reach_loss']:.5f} | "
@@ -356,6 +395,15 @@ def train_ecfppo(args) -> None:
             debug_interval = getattr(train_cfg.runner, 'debug_stats_interval', 0)
             if debug_interval and (iteration + 1) % debug_interval == 0 and debug_stats:
                 std = actor_critic.std.detach().float()
+                act_mean_abs_dim = _format_debug_dim_values(
+                    debug_stats, "action_mean_abs_mean", action_shape[0]
+                )
+                act_mean_clip_dim = _format_debug_dim_values(
+                    debug_stats, "action_mean_clip_ratio", action_shape[0], fmt=".4f"
+                )
+                clipped_act_abs_dim = _format_debug_dim_values(
+                    debug_stats, "clipped_action_abs_mean", action_shape[0]
+                )
                 debug_line = (
                     f"debug {iteration + 1:05d} | "
                     f"std_mean {std.mean().item():.4f} | std_min {std.min().item():.4f} | std_max {std.max().item():.4f} | "
@@ -369,6 +417,9 @@ def train_ecfppo(args) -> None:
                     f"act_mean_abs [{debug_stats.get('action_mean_abs_mean', float('nan')):.3e}, {debug_stats.get('action_mean_abs_max', float('nan')):.3e}] | "
                     f"act_mean_clip_ratio {debug_stats.get('action_mean_clip_ratio', float('nan')):.4f} | "
                     f"clipped_act_abs [{debug_stats.get('clipped_action_abs_mean', float('nan')):.3e}, {debug_stats.get('clipped_action_abs_max', float('nan')):.3e}] | "
+                    f"act_mean_abs_dim {act_mean_abs_dim} | "
+                    f"act_mean_clip_dim {act_mean_clip_dim} | "
+                    f"clipped_act_abs_dim {clipped_act_abs_dim} | "
                     f"init_energy [{debug_stats.get('init_energy_min', float('nan')):.3e}, {debug_stats.get('init_energy_mean', float('nan')):.3e}, {debug_stats.get('init_energy_max', float('nan')):.3e}] | "
                     f"v_reach [{debug_stats.get('values_reach_min', float('nan')):.3e}, {debug_stats.get('values_reach_max', float('nan')):.3e}] | "
                     f"t_reach [{debug_stats.get('targets_reach_min', float('nan')):.3e}, {debug_stats.get('targets_reach_max', float('nan')):.3e}] | "

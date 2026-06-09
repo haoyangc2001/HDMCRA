@@ -195,6 +195,31 @@ def test_success_rate_energy_alignment_uses_post_step_state():
     print("[PASS] test_success_rate_energy_alignment_uses_post_step_state")
 
 
+def test_success_metrics_decompose_failure_modes():
+    from legged_gym.scripts.train_ecfppo import compute_reach_avoid_metrics
+
+    T, N = 6, 4
+    g_seq = torch.ones(T, N)
+    h_seq = -torch.ones(T, N)
+    g_seq[2:, 0] = -1.0  # env0: 安全到达
+    g_seq[4:, 1] = -1.0  # env1: 到达前已经不安全
+    h_seq[1:, 1] = 0.5
+    h_seq[3:, 3] = 0.5  # env3: 未到达且不安全
+
+    energy_seq = torch.stack([torch.ones(N) * (100.0 - 10.0 * t) for t in range(T + 1)])
+    metrics = compute_reach_avoid_metrics(g_seq, h_seq, energy_seq)
+
+    assert metrics['success_rate'] == 0.25
+    assert metrics['reach_rate'] == 0.5
+    assert metrics['safe_rate'] == 0.5
+    assert metrics['unsafe_before_reach_rate'] == 0.25
+    assert metrics['no_reach_rate'] == 0.5
+    assert metrics['unsafe_rate'] == 0.5
+    assert metrics['execution_cost'] == 2.0
+    assert abs(metrics['avg_energy_consumption'] - 30.0) < 1e-6
+    print("[PASS] test_success_metrics_decompose_failure_modes")
+
+
 # ---- Test 7: 训练脚本可导入 ----
 def test_import_train_script():
     from legged_gym.scripts.train_ecfppo import train_ecfppo, HierarchicalVecEnv, create_env
@@ -350,6 +375,7 @@ if __name__ == '__main__':
         test_success_rate_with_energy,
         test_success_rate_without_energy,
         test_success_rate_energy_alignment_uses_post_step_state,
+        test_success_metrics_decompose_failure_modes,
         test_import_train_script,
         test_num_obs_includes_energy,
         test_buffer_stores_h_values,

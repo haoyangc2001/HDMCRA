@@ -19,7 +19,7 @@
 | D004 | open | P0 | energy/done 饱和导致训练语义退化 | `legged_gym_go2/logs/ecfppo_go2/20260607-094159/training.log` | 增加 energy/action 诊断字段，不改变训练逻辑，跑 100-200 iter 短训 | 若 energy 很快掉到下界且动作大量裁剪，优先校准能耗尺度；若 energy 正常但 critic 仍越界，再处理 reach critic 学习率/输出约束 |
 | D005 | open | P0 | 动作饱和导致策略-执行语义错配 | `legged_gym_go2/logs/ecfppo_go2/20260607-225408/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-113056/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-133653/training.log` | `policy_learning_rate=1e-4` 已显著改善动作贴边，但 success 未稳定，动作问题不再是唯一主因 | 转入 D006：优先处理 `reach critic` 输出越界和 `reach_clip_ratio` 偏高，不继续单纯降低 policy 学习率 |
 | D006 | open | P0 | reach critic 输出越界导致动作改善后仍训练坍塌 | `legged_gym_go2/logs/ecfppo_go2/20260608-133653/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-151933/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-221634/training.log`、`rsl_rl/rsl_rl/algorithms/ecfppo.py` | 中等规模续训证明 `reach_learning_rate=3e-4` 只短期有效，后期 actor mean 再次发散，动作/能耗/critic 联合恶化 | 不继续长训；下一步优先处理 actor mean 边界约束或边界正则，同时保持 reach 降速配置 |
-| D007 | open | P0 | actor mean 发散导致 raw action 与 clipped action 语义错配 | `legged_gym_go2/logs/ecfppo_go2/20260608-221634/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260609-080519/training.log`、`rsl_rl/rsl_rl/algorithms/ecfppo.py`、`rsl_rl/rsl_rl/modules/actor_critic.py`、`legged_gym_go2/legged_gym/envs/go2/high_level_navigation_env.py` | `actor_mean_bound_coef=1e-3` 明显缓解 actor mean 发散和 energy loss，但后期动作越界仍回升，success 仍坍塌；已提高到 `1e-2` | 跑 100-150 iter 单变量短训，确认动作越界是否能长期低于约 0.6；若仍不足，再考虑 `3e-2` 或 tanh/squashed Gaussian 方案 |
+| D007 | open | P0 | actor mean 发散导致 raw action 与 clipped action 语义错配 | `legged_gym_go2/logs/ecfppo_go2/20260608-221634/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260609-080519/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260609-121135/training.log`、`rsl_rl/rsl_rl/algorithms/ecfppo.py`、`rsl_rl/rsl_rl/modules/actor_critic.py`、`legged_gym_go2/legged_gym/envs/go2/high_level_navigation_env.py` | `actor_mean_bound_coef=1e-2` 进一步稳定 energy/reach critic 和动作幅度，但 success 仍在高峰后断崖坍塌；已补 success 分解和动作分量诊断 | 跑 100-150 iter 诊断短训，观察 `reach_rate`、`safe_rate`、`unsafe_before_reach`、`no_reach`、`act_mean_clip_dim`，再决定是否调正则或改动作分布 |
 
 ## 训练记录索引
 
@@ -39,6 +39,7 @@
 | 20260608-151933 | 2026-06-08 | `policy_learning_rate=1e-4`、`reach_learning_rate=3e-4` 后 150 iter 短训 | 1-150 | 0.177 | 0.110 | `reach_loss` 平均约 5.40e6，较上一轮 3.62e7 大幅下降；`reach_clip_ratio` 平均约 0.116，较上一轮 0.381 明显下降；但 `act_mean_clip_ratio` 平均约 0.744、最终约 0.909，`energy_loss` 平均约 1717、最终约 5227，动作贴边和 energy critic 后期回升 | reach 降速有效，训练不再早期完全坍塌；但动作饱和和 energy loss 后期回流，需要中等规模复测确认趋势 |
 | 20260608-221634 | 2026-06-08 | 从 `20260608-151933/model_final.pt` 恢复，继续到 500 iter | 151-500 | 0.198 | 0.052 | `act_mean_clip_ratio` 平均约 0.934、后期约 0.973；`act_mean_abs_mean` 平均约 79.91，最大约 2063；`e_cons_mean` 平均约 7.65，`first_emin_step` 平均约 79.40；`energy_loss` 平均约 2.88e4，最大约 1.35e5；`reach_loss` 平均约 6.23e7，最大约 2.15e8 | 中等规模续训反证“继续训练会自然稳定”；短期 reach 降速有效，但长期 actor mean 发散和动作饱和重新主导训练失败 |
 | 20260609-080519 | 2026-06-09 | `actor_mean_bound_coef=1e-3` 后 200 iter 短训 | 1-200 | 0.353 | 0.028 | `mean_bound_loss` 平均约 1.643；`act_mean_clip_ratio` 平均约 0.642，较无正则续训 0.934 明显下降；`act_mean_abs_mean` 平均约 3.43，较 79.91 大幅下降；但 151-200 窗口 `act_mean_clip_ratio` 回升到约 0.814，`e_cons_mean` 回升到约 7.01，`reach_loss` 平均约 1.14e8 | D007 方向有效但系数偏弱；actor mean 仍会后期重新贴边，下一步应提高正则系数而不是继续长训 |
+| 20260609-121135 | 2026-06-09 | `actor_mean_bound_coef=1e-2` 后 200 iter 短训 | 1-200 | 0.289 | 0.011 | `energy_loss` 平均约 1.04e2，`reach_loss` 平均约 4.91e6，较 `1e-3` 明显下降；`act_mean_clip_ratio` 平均约 0.575，`act_mean_abs_mean` 平均约 1.86；但 iter 151-160 success 均值约 0.228 后，161-190 掉到约 0.012，且 critic 未同步爆炸 | 更强正则稳定了动作和 critic，但 success 仍存在策略/任务语义断崖；下一步应补 success 分解诊断，而不是立即继续加正则 |
 
 ## 分析记录
 
@@ -583,6 +584,32 @@
   - 已将 `actor_mean_bound_coef` 从 `1e-3` 提高到 `1e-2`，保持其他配置不变，下一步跑 100-150 iter 单变量短训。
   - 若 100-150 iter 后 `act_mean_clip_ratio` 仍高于约 0.6，再考虑 `3e-2` 或改为 tanh/squashed Gaussian 方案。
 
+- 第二轮验证：
+  - 已完成 `actor_mean_bound_coef=1e-2` 后 200 iter 短训：`legged_gym_go2/logs/ecfppo_go2/20260609-121135/training.log`。
+  - 相比 `1e-3`，`energy_loss` 平均从约 1.15e3 降到约 1.04e2，`reach_loss` 平均从约 5.35e7 降到约 4.91e6，`reach_clip_ratio` 平均从约 0.278 降到约 0.095。
+  - `act_mean_clip_ratio` 平均从约 0.642 降到约 0.575，`act_mean_abs_mean` 平均从约 3.43 降到约 1.86，`clipped_act_abs_mean` 平均从约 0.820 降到约 0.786。
+  - 151-160 窗口表现最好：`success` 均值约 0.228，峰值约 0.289，`act_mean_clip_ratio` 约 0.440，`reach_clip_ratio` 约 0.002，说明当前配置可以短暂进入较好策略区间。
+  - 但 161-190 窗口 `success` 均值约 0.012，且对应 `reach_clip_ratio` 仍低、`energy_loss` 未爆炸，说明坍塌不再是旧的 critic 爆炸/动作极端饱和模式。
+- 第二轮结论：
+  - `actor_mean_bound_coef=1e-2` 是比 `1e-3` 更稳定的设置，动作、能耗、reach critic 都明显改善。
+  - 但 success 断崖仍存在，下一步需要分解 success 统计，定位是未到达目标、提前不安全、还是 energy/done 语义造成训练信号错配。
+  - 目前不建议直接继续提高到 `3e-2`，否则可能把动作进一步压小，但不能回答 success 断崖原因。
+- 第二轮验证后下一步计划：
+  - 保持 `actor_mean_bound_coef=1e-2` 不变。
+  - 在 `compute_reach_avoid_success_rate()` 或训练日志中增加只读诊断字段：`reach_rate`（到达比例）、`safe_rate`（到达前安全比例）、`unsafe_before_reach_rate`（到达前不安全比例）、`no_reach_rate`（未到达比例）。
+  - 同时增加三维高层动作的分量统计，例如 `act_mean_abs_dim` 和 `act_mean_clip_dim`，判断是否某个动作维度主导策略坍塌。
+  - 跑 100-150 iter 诊断短训后，再决定是调正则系数、降低策略更新强度，还是进入 tanh/squashed Gaussian 方案。
+
+- 第三轮诊断改动：
+  - `legged_gym_go2/legged_gym/scripts/train_ecfppo.py`：新增 `compute_reach_avoid_metrics()`，保留旧 `compute_reach_avoid_success_rate()` 兼容接口；iter 日志新增 `reach_rate`（到达目标比例）、`safe_rate`（到达前安全比例）、`unsafe_before_reach`（到达前不安全比例）和 `no_reach`（未到达比例）。
+  - `rsl_rl/rsl_rl/algorithms/ecfppo.py`：在 buffer debug 统计中新增动作分量字段，记录 `act_mean_abs_dim`（各动作维度均值绝对值）、`act_mean_clip_dim`（各动作维度均值越界比例）和 `clipped_act_abs_dim`（各动作维度实际执行动作绝对值）。
+  - 该改动只增加诊断字段，不改变 rollout、GAE、loss、优化器和环境 step 逻辑。
+- 第三轮改动后下一步计划：
+  - 跑 100-150 iter 诊断短训。
+  - 若 `no_reach` 高，优先判断动作是否被正则压得过小或目标驱动不足。
+  - 若 `unsafe_before_reach` 高，优先检查避障/安全约束和高层动作方向。
+  - 若某个 `act_mean_clip_dim` 长期显著高于其他维度，优先针对该动作维度检查动作语义、归一化和代价尺度。
+
 ## 决策记录
 
 - 2026-06-05：确认 `std` 未加入 policy optimizer 是确定实现 bug，已按最小修复处理。该改动不改变 EC-EFPPO 的 GAE/target 语义，只恢复参考实现中 policy 分布参数可训练的基本行为。
@@ -609,6 +636,8 @@
 - 2026-06-09：D007 第一轮改动：在 policy loss 中加入 actor mean 边界正则 `mean_bound_loss`，默认 `actor_mean_bound=1.0`、`actor_mean_bound_coef=1e-3`；该改动不改变环境裁剪和高斯策略分布定义，只惩罚越界均值。
 - 2026-06-09：20260609-080519 验证 `actor_mean_bound_coef=1e-3` 方向有效但偏弱；动作均值越界和能耗显著低于无正则续训，但后期仍回升并导致 success 坍塌。
 - 2026-06-09：D007 第二轮改动：将 `actor_mean_bound_coef` 从 `1e-3` 提高到 `1e-2`，保持 policy/reach/energy 学习率、std 上界和环境动作裁剪逻辑不变，用于验证更强边界正则能否长期压住 actor mean 越界。
+- 2026-06-09：20260609-121135 证明 `actor_mean_bound_coef=1e-2` 显著稳定动作、能耗和 reach critic，但 success 在 151-160 高峰后仍断崖坍塌；下一步不继续盲目加正则，先补 success 分解和动作分量诊断。
+- 2026-06-09：D007 第三轮改动：已补 success 分解诊断和动作分量诊断，且不改变训练逻辑；下一轮用 100-150 iter 短训判断 success 断崖主要来自未到达、不安全，还是某一动作维度异常。
 
 ## 记录模板
 
