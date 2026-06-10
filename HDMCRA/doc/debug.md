@@ -12,13 +12,13 @@
 ## 新手接手摘要
 
 - 当前项目不是“实现未完成”，而是“实现已完成但训练稳定性尚未验证通过”。接手后不要先大改结构，也不要直接长训 1500 iter。
-- 训练稳定性诊断已经从 D001 推进到 D012：先后处理了 `std`（动作标准差）未优化、`std` 无界增长、reach bootstrap target 发散、能耗尺度过大、动作饱和、reach critic 更新过强、actor mean 越界、policy advantage 符号方向、安全失败分组诊断、resume schedule 语义、bounded actor mean，以及 raw mean 饱和。
-- 当前默认关键配置：`log_std_max=log(0.5)`、`policy_learning_rate=1e-4`、`energy_learning_rate=1e-3`、`reach_learning_rate=3e-4`、`reach_value_clip=5000.0`、`bounded_actor_mean=True`、`actor_raw_mean_bound=2.0`、`actor_raw_mean_bound_coef=1e-3`、`actor_mean_bound=1.0`、`actor_mean_bound_coef=1e-2`、`debug_stats_interval=10`。
+- 训练稳定性诊断已经从 D001 推进到 D013：先后处理了 `std`（动作标准差）未优化、`std` 无界增长、reach bootstrap target（到达引导目标）发散、能耗尺度过大、动作饱和、reach critic（到达价值网络）更新过强、actor mean（actor 动作均值）越界、policy advantage（策略优势）符号方向、安全失败分组诊断、resume schedule（续训退火计划）语义、bounded actor mean（有界 actor 均值）、raw mean（actor 原始均值）饱和，以及 raw mean 正则强度不足。
+- 当前默认关键配置：`log_std_max=log(0.5)`（动作标准差上界）、`policy_learning_rate=1e-4`（策略学习率）、`energy_learning_rate=1e-3`（能量价值网络学习率）、`reach_learning_rate=3e-4`（到达价值网络学习率）、`reach_value_clip=5000.0`（到达价值裁剪）、`bounded_actor_mean=True`（启用有界 actor 均值）、`actor_raw_mean_bound=2.0`（actor 原始均值边界）、`actor_raw_mean_bound_coef=1e-2`（actor 原始均值越界惩罚系数）、`actor_mean_bound=1.0`（actor 动作均值边界）、`actor_mean_bound_coef=1e-2`（actor 动作均值越界惩罚系数）、`debug_stats_interval=10`（debug 统计间隔）。
 - D008 已修正 `advantages_total`（组合优势）在 policy loss 中的符号方向：标准化后取负，使更小的 cost-like reach-avoid 值对应更高动作概率。
 - 最新已完成 4096 env 短训 `20260609-174808` 显示 D008 后 `reach_rate`（到达目标比例）明显恢复，峰值 `success=0.322`、`reach_rate=0.688`；失败瓶颈从纯 `no_reach`（未到达）转向未到达和 `unsafe_before_reach`（到达前不安全）并存。
 - D010 已修复 resume schedule 语义问题；`20260609-233704` 不能作为干净续训结论。
 - D011 采用 `tanh(mean)` 后，干净训练 `20260610-133801` 证明无界越界已被消除，但 bounded mean 迅速贴到 `tanh` 边界，`act_mean_clip_ratio` 后期约 0.99，策略变成有界但饱和的 bang-bang policy。
-- 当前进入 D012：增加 raw actor mean 诊断和正则，约束 `tanh` 前 logits 不要长期超过 `actor_raw_mean_bound=2.0`，先验证是否能降低 `raw_mean_clip_ratio/action_clip_ratio` 并恢复到达能力。
+- 当前进入 D013：`20260610-174615` 证明 D012 能恢复早中期到达能力，但 `actor_raw_mean_bound_coef=1e-3`（actor 原始均值越界惩罚系数）仍压不住 raw logits（tanh 前输出）后期饱和；本轮将系数提高到 `1e-2`，先验证 `raw_mean_clip_ratio`（原始均值越界比例）是否下降，以及 `success/reach_rate/no_reach`（成功率/到达率/未到达比例）是否更稳定。
 
 ## 当前待分析问题
 
@@ -35,7 +35,8 @@
 | D009 | open | P0 | D008 后到达能力恢复但安全失败升高，需要分组诊断 | `legged_gym_go2/logs/ecfppo_go2/20260609-174808/training.log`、`legged_gym_go2/legged_gym/scripts/train_ecfppo.py` | 已新增 `succ/unsafe/noreach` 分组 debug 行，不改变训练语义 | 跑 100-200 iter 诊断短训，比较三组 `adv/hmax/align/act/mean_clip`，定位安全失败来自避障信号、动作饱和还是 advantage 区分不足 |
 | D010 | resolved | P0 | resume 时 schedule 被新的 `max_iterations` 重算，导致 entropy/gamma 退火状态回退 | `legged_gym_go2/logs/ecfppo_go2/20260609-233704/training.log`、`legged_gym_go2/legged_gym/scripts/train_ecfppo.py`、`rsl_rl/rsl_rl/algorithms/ecfppo.py` | 已保存/恢复 `schedule_total_updates`，旧 checkpoint fallback 到 `start_iteration`，并将 entropy 退火下限 clamp 到 0 | 重新从头训练或重新 resume 时使用修复后的代码；正在运行的旧进程不会自动生效，需要重启 |
 | D011 | resolved | P0 | 干净从头训练仍出现 actor mean 大面积越界，raw policy 与 clipped execution 错配 | `legged_gym_go2/logs/ecfppo_go2/20260610-080058/training.log`、`rsl_rl/rsl_rl/modules/actor_critic.py`、`legged_gym_go2/legged_gym/envs/go2/go2_config.py` | 已新增 `bounded_actor_mean=True`，用 `tanh(mean)` 将策略均值限制在 `[-1, 1]`，暂不改变 PPO log_prob 分布形式 | D011 消除了无界越界并降低采样动作裁剪，但 bounded mean 后期几乎全贴边；转入 D012 约束 raw mean 饱和 |
-| D012 | open | P0 | bounded actor mean 变成 tanh 饱和，策略仍大量贴边且到达能力弱 | `legged_gym_go2/logs/ecfppo_go2/20260610-133801/training.log`、`rsl_rl/rsl_rl/modules/actor_critic.py`、`rsl_rl/rsl_rl/algorithms/ecfppo.py` | 新增 `raw_action_mean` 存储、debug 字段和 `actor_raw_mean_bound` 正则，默认 `bound=2.0`、`coef=1e-3` | 从头跑 200-300 iter，观察 `raw_mean_clip_ratio`、`act_mean_clip_ratio`、`action_clip_ratio`、`success/reach_rate/no_reach`；若 raw logits 仍饱和，再提高 raw 正则或降低 policy LR/std |
+| D012 | resolved | P0 | bounded actor mean 变成 tanh 饱和，策略仍大量贴边且到达能力弱 | `legged_gym_go2/logs/ecfppo_go2/20260610-133801/training.log`、`rsl_rl/rsl_rl/modules/actor_critic.py`、`rsl_rl/rsl_rl/algorithms/ecfppo.py` | 已新增 `raw_action_mean`（actor 原始动作均值）存储、debug 字段和 `actor_raw_mean_bound`（actor 原始均值边界）正则，默认 `bound=2.0`、`coef=1e-3` | `20260610-174615` 峰值 `success=0.356`、`reach_rate=0.700`，证明方向有效；但 raw logits（tanh 前输出）仍大量饱和，转入 D013 提高正则系数 |
+| D013 | open | P0 | raw mean 正则方向有效但强度偏弱，后期仍饱和并退化为未到达 | `legged_gym_go2/logs/ecfppo_go2/20260610-174615/training.log`、`legged_gym_go2/legged_gym/envs/go2/go2_config.py` | 将 `actor_raw_mean_bound_coef`（actor 原始均值越界惩罚系数）从 `1e-3` 提高到 `1e-2`，保持 `actor_raw_mean_bound=2.0`（actor 原始均值边界） | 从头跑 200-300 iter，重点看 `raw_mean_clip_ratio`（原始均值越界比例）、`act_mean_clip_ratio`（动作均值贴边比例）、`action_clip_ratio`（采样动作裁剪比例）、`success/reach_rate/no_reach`（成功率/到达率/未到达比例） |
 
 ## 训练记录索引
 
@@ -63,6 +64,7 @@
 | 20260609-233704 | 2026-06-10 | 从 `20260609-213418/model_200.pt` resume 到 `--max_iterations 1500`，旧 schedule 语义 | 201-1102 | 0.436 | 0.019 | iter 201 的 `ent_coef=0.00087`、`gamma_reach=0.999264`，相对原 iter 200 的 `ent_coef≈0.00001`/`gamma_reach=0.999990` 发生退火回退；后段 `no_reach≈0.98` | 不能作为干净续训结论；触发 D010 修复 resume schedule 语义 |
 | 20260610-080058 | 2026-06-10 | D010 后从头训练，未启用 bounded mean | 1-500 | 0.289 | 0.052 | 后段 `act_mean_clip_ratio≈0.84`，iter 500 `reach_rate=0.060`、`no_reach=0.940`、`reach_clip_ratio=0.9262`；`succ/unsafe/noreach` 三组均有较高 mean clip | schedule 已干净，但动作均值越界仍未解决；触发 D011，用 bounded actor mean 先消除均值越界再复测 |
 | 20260610-133801 | 2026-06-10 | D011 `bounded_actor_mean=True` 后从头训练，阶段性到 iter 446 | 1-446 | 0.115 | 0.058 | `act_clip_ratio` 后期约 0.50，低于上一轮 0.77-0.84；但 `act_mean_clip_ratio` 从 iter 200 起约 0.99，说明 bounded mean 被推到 `tanh` 边界；后段 `no_reach≈0.935` | D011 消除无界 raw action 爆炸但引入/暴露 tanh 饱和；触发 D012，对 raw mean 加正则和诊断 |
+| 20260610-174615 | 2026-06-10 | D012 `actor_raw_mean_bound_coef=1e-3` 后从头训练 300 iter | 1-300 | 0.356 | 0.030 | 峰值 iter 187：`success=0.356`（成功率）、`reach_rate=0.700`（到达率）；但后期 `raw_mean_clip_ratio`（原始均值越界比例）仍约 0.65-0.94，iter 300 `no_reach=0.969`（未到达比例） | D012 方向有效但系数偏弱；触发 D013，将 `actor_raw_mean_bound_coef` 提高到 `1e-2` |
 
 ## 分析记录
 
@@ -727,7 +729,20 @@
 - 结论：不要直接进入完整 squashed Gaussian；如果 raw logits 不受控，完整 squashed Gaussian 也会 tanh 饱和。下一步应先增加 raw mean 诊断和 raw mean 饱和正则。
 - 改动：`EC_EFPPO_ActorCritic` 保存 `raw_action_mean`；`EC_EFPPO_Buffer` 保存 raw mean，并新增 `raw_action_mean_abs/raw_action_mean_clip_ratio` 及各维统计；`EC_EFPPO` 新增 `actor_raw_mean_bound` 和 `actor_raw_mean_bound_coef`，在 policy loss 中加入 `relu(abs(raw_mean)-bound)^2`；Go2 默认 `actor_raw_mean_bound=2.0`、`actor_raw_mean_bound_coef=1e-3`；训练日志新增 `raw_mean_bound_loss` 和 raw mean debug 字段。
 - 验证：`tests/test_ecfppo_actor_critic.py` 14/14 通过，`tests/test_train_ecfppo.py` 16/16 通过，`tests/test_ecfppo.py` 21/21 通过。
-- 后续动作：从头跑 200-300 iter。若 `raw_mean_clip_ratio` 降低且 `reach_rate` 恢复，继续 500 iter；若 raw logits 仍饱和，优先提高 raw 正则或降低 policy LR/std，而不是继续长训。
+- 后续动作：已由 `20260610-174615` 验证。D012 恢复了早中期 `success/reach_rate`（成功率/到达率），但 raw logits（tanh 前输出）仍大量饱和；转入 D013 提高 raw mean 正则系数。
+
+### D013: raw mean 正则强度不足导致后期重新饱和
+
+- 日期：2026-06-10
+- 状态：open
+- 严重性：P0
+- 触发原因：D012 后训练 `20260610-174615` 显示早中期到达能力明显恢复，但后期 raw mean（actor 原始均值）仍进入 tanh 饱和区，训练再次退化为 `no_reach`（未到达）主导。
+- 相关日志：`legged_gym_go2/logs/ecfppo_go2/20260610-174615/training.log`
+- 现象：本轮完整 300 iter。峰值出现在 iter 187，`success=0.356`（成功率）、`reach_rate=0.700`（到达率）、`unsafe_before_reach=0.344`（到达前不安全比例）、`no_reach=0.300`（未到达比例）。后期快速退化，iter 300 为 `success=0.030`、`reach_rate=0.031`、`unsafe_before_reach=0.001`、`no_reach=0.969`。debug 中 `raw_mean_clip_ratio`（原始均值越界比例）在后段仍约 0.65-0.94，说明 `actor_raw_mean_bound_coef=1e-3`（actor 原始均值越界惩罚系数）不足以压住 raw logits（tanh 前输出）。
+- 代码链路：`EC_EFPPO.update()` 已把 `raw_mean_bound_loss`（原始均值边界损失）加入 policy loss（策略损失），但 `1e-3` 系数对应的实际损失贡献只有约 0.001-0.005 量级，低于 policy 更新推动 raw logits 饱和的强度。`go2_config.py` 是本轮最小改动入口。
+- 结论：D012 的方向有效，不应回滚 bounded actor mean（有界 actor 均值）或 raw mean 正则；当前应先把 `actor_raw_mean_bound_coef` 从 `1e-3` 提高到 `1e-2`，保持 `actor_raw_mean_bound=2.0` 不变，单变量验证更强 raw mean 约束是否能降低饱和。
+- 改动：Go2 EC-EFPPO 默认 `actor_raw_mean_bound_coef=1e-2`；测试同步更新配置断言。
+- 验证：先运行 EC-EFPPO actor-critic、训练配置和算法单元测试；通过后从头跑 200-300 iter。重点观察 `raw_mean_clip_ratio`（原始均值越界比例）、`act_mean_clip_ratio`（动作均值贴边比例）、`action_clip_ratio`（采样动作裁剪比例）、`success/reach_rate/no_reach`（成功率/到达率/未到达比例）。
 
 ## 决策记录
 
@@ -764,6 +779,7 @@
 - 2026-06-10：D010 修复 resume 续训 schedule 语义；新 checkpoint 保存 `schedule_total_updates`，旧 checkpoint resume 不再按新的 `max_iterations` 重新打开 entropy。
 - 2026-06-10：`20260610-080058` 干净从头训练仍显示后期 actor mean 大面积越界；D011 先采用 `tanh(mean)` bounded mean，不直接上完整 squashed Gaussian，避免同步改 PPO log_prob、entropy 和 buffer 语义。
 - 2026-06-10：`20260610-133801` 证明 D011 降低了采样动作裁剪但 bounded mean 迅速 tanh 饱和；D012 增加 raw mean 诊断和 `actor_raw_mean_bound` 正则。
+- 2026-06-10：`20260610-174615` 证明 D012 能把峰值 `success/reach_rate`（成功率/到达率）恢复到 0.356/0.700，但 `raw_mean_clip_ratio`（原始均值越界比例）仍高且后期 `no_reach`（未到达）回到 0.969；D013 将 `actor_raw_mean_bound_coef`（actor 原始均值越界惩罚系数）从 `1e-3` 提高到 `1e-2`。
 
 ## 记录模板
 

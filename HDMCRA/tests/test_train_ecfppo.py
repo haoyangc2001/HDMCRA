@@ -34,7 +34,7 @@ def test_config_class():
     assert cfg.algorithm.entropy_coef == 0.001
     assert cfg.algorithm.bounded_actor_mean is True
     assert cfg.algorithm.actor_raw_mean_bound == 2.0
-    assert cfg.algorithm.actor_raw_mean_bound_coef == 1e-3
+    assert cfg.algorithm.actor_raw_mean_bound_coef == 1e-2
     assert cfg.algorithm.actor_mean_bound == 1.0
     assert cfg.algorithm.actor_mean_bound_coef == 1e-2
     assert cfg.algorithm.anneal_entropy == True
@@ -122,7 +122,7 @@ def test_alg_with_config():
     assert alg.actor_mean_bound == 1.0
     assert alg.actor_mean_bound_coef == 1e-2
     assert alg.actor_raw_mean_bound == 2.0
-    assert alg.actor_raw_mean_bound_coef == 1e-3
+    assert alg.actor_raw_mean_bound_coef == 1e-2
     assert alg.policy_optimizer.param_groups[0]['lr'] == 1e-4
     assert alg.energy_optimizer.param_groups[0]['lr'] == 1e-3
     assert alg.reach_optimizer.param_groups[0]['lr'] == 3e-4

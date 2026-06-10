@@ -23,7 +23,7 @@ HDMCRA 已经完成 EC-EFPPO 的主体工程实现。当前工作重点是 **训
 
 ## 当前最新诊断焦点
 
-截至 2026-06-10，当前诊断主线是 D012：D011 的 `tanh(mean)` bounded actor mean 消除了无界动作均值越界，但最新训练 `20260610-133801` 显示 bounded mean 迅速进入 tanh 饱和，策略仍大量贴边且到达能力不足。
+截至 2026-06-10，当前诊断主线是 D013：D012 的 raw mean（actor 原始均值）诊断和正则恢复了早中期到达能力，但最新训练 `20260610-174615` 显示 `actor_raw_mean_bound_coef=1e-3`（actor 原始均值越界惩罚系数）仍偏弱，raw logits（tanh 前输出）后期继续饱和并导致 `no_reach`（未到达）重新主导失败。
 
 已经确认的事实：
 
@@ -32,18 +32,19 @@ HDMCRA 已经完成 EC-EFPPO 的主体工程实现。当前工作重点是 **训
 - D010 已修复 resume schedule 语义；新 checkpoint 会保存 `schedule_total_updates`，旧 checkpoint resume 会 fallback 到 `start_iteration`。
 - D011 采用 `bounded_actor_mean=True` 后，`action_mean` 不再无界越过 `[-1, 1]`，`mean_bound_loss` 变为 0，采样动作裁剪比例从上一轮后段约 `0.77-0.84` 降到约 `0.50`。
 - 但 `20260610-133801` 截至 iter 446 的峰值只有 `success=0.115`、`reach_rate=0.196`；从 iter 200 起 `act_mean_clip_ratio≈0.99`，说明 bounded mean 几乎全卡在 `tanh` 边界，后段 `no_reach≈0.935`。
-- D012 增加 raw mean 诊断和正则：`EC_EFPPO_ActorCritic` 保存 `raw_action_mean`，buffer/debug 记录 raw mean 统计，policy loss 新增 `actor_raw_mean_bound` 正则。Go2 默认 `actor_raw_mean_bound=2.0`、`actor_raw_mean_bound_coef=1e-3`。
+- D012 增加 raw mean（actor 原始均值）诊断和正则：`EC_EFPPO_ActorCritic` 保存 `raw_action_mean`（actor 原始动作均值），buffer/debug 记录 raw mean 统计，policy loss（策略损失）新增 `actor_raw_mean_bound`（actor 原始均值边界）正则。`20260610-174615` 证明该方向有效，峰值 `success=0.356`（成功率）、`reach_rate=0.700`（到达率），但后期 `raw_mean_clip_ratio`（原始均值越界比例）仍在 0.65-0.94 区间，最终 `no_reach=0.969`（未到达比例）。
+- D013 将 Go2 默认 `actor_raw_mean_bound_coef`（actor 原始均值越界惩罚系数）从 `1e-3` 提高到 `1e-2`，保持 `actor_raw_mean_bound=2.0`（actor 原始均值边界）不变，先验证更强正则是否能压低 raw logits 饱和。
 
-当前下一步：先运行相关测试，再用 D012 代码从头跑 200-300 iter。验证重点是 `raw_mean_clip_ratio` 是否下降、`act_mean_clip_ratio` 是否不再长期接近 1、`action_clip_ratio` 是否低于 0.5，以及 `success/reach_rate/no_reach` 是否恢复。
+当前下一步：先运行相关测试，再用 D013 配置从头跑 200-300 iter。验证重点是 `raw_mean_clip_ratio`（原始均值越界比例）是否明显下降、`act_mean_clip_ratio`（动作均值贴边比例）是否不再后期回升、`action_clip_ratio`（采样动作裁剪比例）是否低于 0.5，以及 `success/reach_rate/no_reach`（成功率/到达率/未到达比例）是否稳定。
 
 如果接手时已经有新日志，优先判断：
 
-- `raw_mean_clip_ratio` 仍高：说明 raw logits 仍被推入 tanh 饱和区，优先提高 `actor_raw_mean_bound_coef` 或降低 policy LR/std。
-- `raw_mean_clip_ratio` 降低但 `action_clip_ratio` 仍高：说明采样噪声仍撞边，优先检查 `std_mean/std_max` 和 entropy 退火。
-- `act_mean_clip_ratio` 接近 0 但 `noreach` 高：动作边界问题缓解后仍目标驱动不足，回到目标方向观测、policy advantage 和动作投影。
-- `unsafe` 组 `hmax` 明显为正且 `align` 也为正：策略能冲向目标但穿过不安全区域，优先检查安全约束、障碍距离和避障信号权重。
-- `succ` 组 `adv` 没有明显优于 `unsafe/noreach`：combined advantage 仍可能没有正确区分安全成功轨迹，需要回到 `advantages_total` 构造和归一化。
-- `reach_clip_ratio` 高：reach critic 输出仍越过语义边界，优先检查 reach critic 学习率、梯度裁剪或输出约束。
+- `raw_mean_clip_ratio`（原始均值越界比例）仍高：说明 raw logits（tanh 前输出）仍被推入 tanh 饱和区，优先继续提高 `actor_raw_mean_bound_coef`（actor 原始均值越界惩罚系数）或降低 policy LR（策略学习率）/`std`（动作标准差）。
+- `raw_mean_clip_ratio`（原始均值越界比例）降低但 `action_clip_ratio`（采样动作裁剪比例）仍高：说明采样噪声仍撞边，优先检查 `std_mean/std_max`（标准差均值/最大值）和 entropy（熵）退火。
+- `act_mean_clip_ratio`（动作均值贴边比例）接近 0 但 `noreach`（未到达）高：动作边界问题缓解后仍目标驱动不足，回到目标方向观测、policy advantage（策略优势）和动作投影。
+- `unsafe`（不安全失败）组 `hmax`（最大安全约束值）明显为正且 `align`（动作目标对齐度）也为正：策略能冲向目标但穿过不安全区域，优先检查安全约束、障碍距离和避障信号权重。
+- `succ`（成功）组 `adv`（优势）没有明显优于 `unsafe/noreach`（不安全失败/未到达）：combined advantage（组合优势）仍可能没有正确区分安全成功轨迹，需要回到 `advantages_total`（组合优势）构造和归一化。
+- `reach_clip_ratio`（reach critic 裁剪比例）高：reach critic（到达价值网络）输出仍越过语义边界，优先检查 reach critic 学习率、梯度裁剪或输出约束。
 
 ## 重要原则
 
