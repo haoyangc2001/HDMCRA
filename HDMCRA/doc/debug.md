@@ -12,13 +12,12 @@
 ## 新手接手摘要
 
 - 当前项目不是“实现未完成”，而是“实现已完成但训练稳定性尚未验证通过”。接手后不要先大改结构，也不要直接长训 1500 iter。
-- 训练稳定性诊断已经从 D001 推进到 D007：先后处理了 `std`（动作标准差）未优化、`std` 无界增长、reach bootstrap target 发散、能耗尺度过大、动作饱和、reach critic 更新过强、actor mean 越界等问题。
-- 当前默认关键配置：`log_std_max=log(0.5)`、`policy_learning_rate=1e-4`、`energy_learning_rate=1e-3`、`reach_learning_rate=3e-4`、`reach_value_clip=5000.0`、`actor_mean_bound=1.0`、`actor_mean_bound_coef=1e-2`、`debug_stats_interval=10`。
-- 最新已完成短训 `20260609-121135` 证明 `actor_mean_bound_coef=1e-2` 能显著稳定动作、能耗和 reach critic，但 `success`（成功率）仍在高峰后断崖坍塌。
-- 最新代码已补充 success 分解诊断：`reach_rate`（到达目标比例）、`safe_rate`（安全比例）、`unsafe_before_reach`（到达前不安全比例）、`no_reach`（未到达比例）。
-- 最新代码已补充动作分量诊断：`act_mean_abs_dim`（各动作维度均值绝对值）、`act_mean_clip_dim`（各动作维度均值越界比例）、`clipped_act_abs_dim`（各动作维度实际执行动作绝对值）。
-- 最新已完成短训 `20260609-144319` 显示 `success`（成功率）在中期短暂升高后断崖坍塌，最终失败由 `no_reach`（未到达）主导，而不是 `unsafe_before_reach`（到达前不安全）主导。
-- 当前进入 D008：`advantages_total`（组合优势）来自 `g_append=max(reach, -energy)`，语义更接近 reach-avoid/cost-like 的“越小越好”；已将 policy loss 使用的 advantage 标准化后取负，并补充梯度方向测试。
+- 训练稳定性诊断已经从 D001 推进到 D011：先后处理了 `std`（动作标准差）未优化、`std` 无界增长、reach bootstrap target 发散、能耗尺度过大、动作饱和、reach critic 更新过强、actor mean 越界、policy advantage 符号方向、安全失败分组诊断、resume schedule 语义，以及 bounded actor mean。
+- 当前默认关键配置：`log_std_max=log(0.5)`、`policy_learning_rate=1e-4`、`energy_learning_rate=1e-3`、`reach_learning_rate=3e-4`、`reach_value_clip=5000.0`、`bounded_actor_mean=True`、`actor_mean_bound=1.0`、`actor_mean_bound_coef=1e-2`、`debug_stats_interval=10`。
+- D008 已修正 `advantages_total`（组合优势）在 policy loss 中的符号方向：标准化后取负，使更小的 cost-like reach-avoid 值对应更高动作概率。
+- 最新已完成 4096 env 短训 `20260609-174808` 显示 D008 后 `reach_rate`（到达目标比例）明显恢复，峰值 `success=0.322`、`reach_rate=0.688`；失败瓶颈从纯 `no_reach`（未到达）转向未到达和 `unsafe_before_reach`（到达前不安全）并存。
+- D010 已修复 resume schedule 语义问题；`20260609-233704` 不能作为干净续训结论。
+- 当前进入 D011：干净从头训练 `20260610-080058` 仍显示后期 `act_mean_clip_ratio` 大面积升高，说明 actor mean 与环境裁剪动作的错配仍是主瓶颈之一。本次采用 `tanh(mean)` bounded mean 作为最小风险修复，而不是直接切到完整 squashed Gaussian。
 
 ## 当前待分析问题
 
@@ -31,7 +30,10 @@
 | D005 | open | P0 | 动作饱和导致策略-执行语义错配 | `legged_gym_go2/logs/ecfppo_go2/20260607-225408/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-113056/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-133653/training.log` | `policy_learning_rate=1e-4` 已显著改善动作贴边，但 success 未稳定，动作问题不再是唯一主因 | 转入 D006：优先处理 `reach critic` 输出越界和 `reach_clip_ratio` 偏高，不继续单纯降低 policy 学习率 |
 | D006 | open | P0 | reach critic 输出越界导致动作改善后仍训练坍塌 | `legged_gym_go2/logs/ecfppo_go2/20260608-133653/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-151933/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260608-221634/training.log`、`rsl_rl/rsl_rl/algorithms/ecfppo.py` | 中等规模续训证明 `reach_learning_rate=3e-4` 只短期有效，后期 actor mean 再次发散，动作/能耗/critic 联合恶化 | 不继续长训；下一步优先处理 actor mean 边界约束或边界正则，同时保持 reach 降速配置 |
 | D007 | open | P0 | actor mean 发散导致 raw action 与 clipped action 语义错配 | `legged_gym_go2/logs/ecfppo_go2/20260608-221634/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260609-080519/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260609-121135/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260609-144319/training.log`、`rsl_rl/rsl_rl/algorithms/ecfppo.py`、`rsl_rl/rsl_rl/modules/actor_critic.py`、`legged_gym_go2/legged_gym/envs/go2/high_level_navigation_env.py` | `actor_mean_bound_coef=1e-2` 进一步稳定 energy/reach critic 和动作幅度，但 success 仍在高峰后断崖坍塌；已补 success 分解和动作分量诊断；运行中短训早期显示第 0 维动作均值越界异常突出 | 完成 100-150 iter 诊断短训，重点判断 `no_reach` 是否主导失败，以及第 0 维动作是否长期越界；再决定调正则、改动作分布或检查动作语义 |
-| D008 | open | P0 | EC-EFPPO policy advantage 符号方向与 reach-avoid cost-like 语义不一致 | `legged_gym_go2/logs/ecfppo_go2/20260609-144319/training.log`、`rsl_rl/rsl_rl/algorithms/ecfppo.py`、`rsl_rl/rsl_rl/algorithms/reach_avoid_ppo.py`、`legged_gym_go2/legged_gym/envs/go2/high_level_navigation_env.py` | 已确认旧 policy loss 会增大正 `advantages_total` 样本概率，但 `g/h` 定义和 Reach-Avoid PPO 基线均指向越小越好 | 已将 policy loss 使用的 `advantages_total` 标准化后取负；下一步跑短训验证 `reach_rate/no_reach/success` 是否改善 |
+| D008 | resolved | P0 | EC-EFPPO policy advantage 符号方向与 reach-avoid cost-like 语义不一致 | `legged_gym_go2/logs/ecfppo_go2/20260609-144319/training.log`、`rsl_rl/rsl_rl/algorithms/ecfppo.py`、`rsl_rl/rsl_rl/algorithms/reach_avoid_ppo.py`、`legged_gym_go2/legged_gym/envs/go2/high_level_navigation_env.py` | 已确认旧 policy loss 会增大正 `advantages_total` 样本概率，但 `g/h` 定义和 Reach-Avoid PPO 基线均指向越小越好 | D008 后 `20260609-174808` 的 `reach_rate` 明显恢复，`no_reach` 不再单独主导；转入 D009 分析安全失败 |
+| D009 | open | P0 | D008 后到达能力恢复但安全失败升高，需要分组诊断 | `legged_gym_go2/logs/ecfppo_go2/20260609-174808/training.log`、`legged_gym_go2/legged_gym/scripts/train_ecfppo.py` | 已新增 `succ/unsafe/noreach` 分组 debug 行，不改变训练语义 | 跑 100-200 iter 诊断短训，比较三组 `adv/hmax/align/act/mean_clip`，定位安全失败来自避障信号、动作饱和还是 advantage 区分不足 |
+| D010 | resolved | P0 | resume 时 schedule 被新的 `max_iterations` 重算，导致 entropy/gamma 退火状态回退 | `legged_gym_go2/logs/ecfppo_go2/20260609-233704/training.log`、`legged_gym_go2/legged_gym/scripts/train_ecfppo.py`、`rsl_rl/rsl_rl/algorithms/ecfppo.py` | 已保存/恢复 `schedule_total_updates`，旧 checkpoint fallback 到 `start_iteration`，并将 entropy 退火下限 clamp 到 0 | 重新从头训练或重新 resume 时使用修复后的代码；正在运行的旧进程不会自动生效，需要重启 |
+| D011 | open | P0 | 干净从头训练仍出现 actor mean 大面积越界，raw policy 与 clipped execution 错配 | `legged_gym_go2/logs/ecfppo_go2/20260610-080058/training.log`、`rsl_rl/rsl_rl/modules/actor_critic.py`、`legged_gym_go2/legged_gym/envs/go2/go2_config.py` | 已新增 `bounded_actor_mean=True`，用 `tanh(mean)` 将策略均值限制在 `[-1, 1]`，暂不改变 PPO log_prob 分布形式 | 从头跑 300-500 iter，验证 `act_mean_clip_ratio` 是否接近 0、`action_clip_ratio` 是否下降、`success/reach_rate/no_reach` 是否改善；若采样动作仍大量贴边，再考虑完整 squashed Gaussian |
 
 ## 训练记录索引
 
@@ -54,6 +56,10 @@
 | 20260609-121135 | 2026-06-09 | `actor_mean_bound_coef=1e-2` 后 200 iter 短训 | 1-200 | 0.289 | 0.011 | `energy_loss` 平均约 1.04e2，`reach_loss` 平均约 4.91e6，较 `1e-3` 明显下降；`act_mean_clip_ratio` 平均约 0.575，`act_mean_abs_mean` 平均约 1.86；但 iter 151-160 success 均值约 0.228 后，161-190 掉到约 0.012，且 critic 未同步爆炸 | 更强正则稳定了动作和 critic，但 success 仍存在策略/任务语义断崖；下一步应补 success 分解诊断，而不是立即继续加正则 |
 | 20260609-144319 | 2026-06-09 | 新增 success 分解和动作分量诊断后的 200 iter 短训 | 1-200 | 0.289 | 0.011 | `161-200` 窗口 `no_reach≈0.981`、`unsafe_before_reach≈0.002`；最终 `act_mean_clip_ratio=0.7113`、`reach_clip_ratio=0.0235`，std 受控且 critic 未同步爆炸 | 失败主因是策略不去目标；结合代码链路转入 D008，优先检查 policy advantage 符号方向 |
 | 20260609-165333 | 2026-06-09 | D008 符号修复后 `--num_envs 64 --max_iterations 50` 冒烟训练 | 1-50 | 0.203 | 0.016 | 后 10 iter `success≈0.072`、`reach_rate≈0.122`、`no_reach≈0.878`；最终 `act_mean_clip_ratio=0.4093`、`reach_clip_ratio=0.0020` | 小规模结果噪声大，不能证明收敛；但端到端链路正常，且后段 target-drive 有早期改善迹象，下一步需要 4096 env 100-150 iter 复测 |
+| 20260609-174808 | 2026-06-09 | D008 符号修复后 4096 env 200 iter 诊断短训 | 1-200 | 0.322 | 0.322 | 后 10 iter `success≈0.223`、`reach_rate≈0.472`、`unsafe_before_reach≈0.249`、`no_reach≈0.528`；最终 `act_mean_clip_ratio=0.7301`、`reach_clip_ratio=0.6039` | D008 恢复目标驱动；新瓶颈转为未到达和安全失败并存，进入 D009 分组诊断 |
+| 20260609-213244 | 2026-06-09 | D009 分组诊断后 `--num_envs 64 --max_iterations 10` 冒烟训练 | 1-10 | 0.016 | 0.016 | `group 00010` 正常输出；`succ r=0.016`、`unsafe r=0.000`、`noreach r=0.984` | 证明新增分组日志在真实训练链路可用；该小规模结果不用于收敛判断 |
+| 20260609-233704 | 2026-06-10 | 从 `20260609-213418/model_200.pt` resume 到 `--max_iterations 1500`，旧 schedule 语义 | 201-1102 | 0.436 | 0.019 | iter 201 的 `ent_coef=0.00087`、`gamma_reach=0.999264`，相对原 iter 200 的 `ent_coef≈0.00001`/`gamma_reach=0.999990` 发生退火回退；后段 `no_reach≈0.98` | 不能作为干净续训结论；触发 D010 修复 resume schedule 语义 |
+| 20260610-080058 | 2026-06-10 | D010 后从头训练，未启用 bounded mean | 1-500 | 0.289 | 0.052 | 后段 `act_mean_clip_ratio≈0.84`，iter 500 `reach_rate=0.060`、`no_reach=0.940`、`reach_clip_ratio=0.9262`；`succ/unsafe/noreach` 三组均有较高 mean clip | schedule 已干净，但动作均值越界仍未解决；触发 D011，用 bounded actor mean 先消除均值越界再复测 |
 
 ## 分析记录
 
@@ -652,6 +658,57 @@
 - 验证：`tests/test_ecfppo.py` 20/20 通过，`tests/test_ecfppo_gae.py` 11/11 通过，`tests/test_energy_state.py` 12/12 通过；D008 符号修复后 `20260609-165333` 50 iter 冒烟训练完成，峰值 `success=0.203`，后 10 iter `reach_rate≈0.122`、`no_reach≈0.878`。
 - 后续动作：小规模冒烟训练噪声大，不能证明收敛；下一步用 4096 env 跑 100-150 iter 诊断短训。如果 `reach_rate` 持续提升且 `no_reach` 下降，再观察 `unsafe_before_reach` 是否成为新瓶颈；如果仍不改善，回到动作语义和 rollout 分组 advantage 统计。
 
+
+### D009: D008 后安全失败升高的分组诊断
+
+- 日期：2026-06-09
+- 状态：open
+- 严重性：P0
+- 触发原因：D008 符号修复后的 4096 env 训练 `20260609-174808` 显示 `reach_rate` 明显恢复，但 `unsafe_before_reach` 升高，训练瓶颈从“不去目标”转为未到达和安全失败并存。
+- 相关日志：`legged_gym_go2/logs/ecfppo_go2/20260609-174808/training.log`
+- 现象：该 run 跑满 200 iter，峰值 `success=0.322`、`reach_rate=0.688`、`safe_rate=0.354`；后 10 iter 平均 `success≈0.223`、`reach_rate≈0.472`、`unsafe_before_reach≈0.249`、`no_reach≈0.528`。
+- 初步假设：D008 已恢复目标驱动，但当前日志还不能判断安全失败来自 `h`（安全约束）信号不足、动作饱和/转向维度失控、还是 `advantages_total` 对安全成功和不安全到达区分不够。
+- 代码链路：`compute_reach_avoid_metrics()` 生成 success/failure mask；`EC_EFPPO_Buffer` 保存 rollout 的 `advantages_total`、`g_values/h_values`、`actions/action_mean` 和 observations；`train_ecfppo.py` 在 debug interval 写训练诊断。
+- 证据：D008 前 `20260609-144319` 后段 `no_reach≈0.981`；D008 后 `20260609-174808` 后 10 iter `reach_rate≈0.472`，说明策略开始接近目标；但 `unsafe_before_reach≈0.249`，说明安全失败成为新增主要瓶颈。
+- 结论：下一步不应先调超参数或修改安全约束，而应先把 rollout 按 `succ/unsafe/noreach` 分组，直接比较三类轨迹的 advantage、`g/h`、目标方向对齐和动作越界。
+- 改动：`train_ecfppo.py` 新增 `success_mask`、`unsafe_before_reach_mask`、`no_reach_mask`、`first_indices`；新增 `compute_rollout_group_debug_stats()` 和 `group` 日志行；`tests/test_train_ecfppo.py` 新增分组 mask 和分组统计测试。该改动只增加诊断，不改变 rollout、GAE、loss 或 optimizer。
+- 验证：`tests/test_train_ecfppo.py` 15/15 通过；D009 冒烟训练 `20260609-213244` 跑满 10 iter，`training.log` 已写出 `group 00010`，包含 `succ/unsafe/noreach` 三组统计。
+- 后续动作：跑 100-200 iter 诊断短训，读取每个 `group` 行，重点比较 `unsafe` 组相对 `succ` 组的 `hmax`、`align`、`act` 和 `mean_clip`；如果 `unsafe` 组目标对齐高但 `hmax` 为正，优先处理安全约束/避障信号；如果 `mean_clip` 高，优先处理动作边界和维度语义；如果 `adv` 无法区分三组，回到 combined advantage 构造。
+
+
+### D010: resume 续训时 schedule 被新的 max_iterations 重算
+
+- 日期：2026-06-10
+- 状态：resolved
+- 严重性：P0
+- 触发原因：`20260609-233704` 从 `20260609-213418/model_200.pt` 续训到 `--max_iterations 1500` 后，iter 201 的 `ent_coef` 和 `gamma_reach` 不再延续原 checkpoint 末尾状态。
+- 相关日志：`legged_gym_go2/logs/ecfppo_go2/20260609-233704/training.log`
+- 现象：原 run iter 200 已经 `ent_coef≈0.00001`、`gamma_reach=0.999990`；续训 run iter 201 变为 `ent_coef=0.00087`、`gamma_reach=0.999264`。这相当于重新打开探索并改变 reach 折扣时间尺度。
+- 初步假设：`train_ecfppo.py` 使用当前命令行的 `max_iterations` 作为 `total_updates`，而不是 checkpoint 原始 schedule horizon；旧 checkpoint 又没有保存 schedule horizon，导致 resume 时退火进度被新实验长度重算。
+- 代码链路：`train_ecfppo.py` 读取 `start_iteration` 后设置 `total_updates=max_iterations`；每轮通过 `EC_EFPPO.compute_gamma_reach()` 和 `compute_entropy_coef()` 计算退火值；checkpoint 旧格式只保存 `iteration`，未保存 `schedule_total_updates`。
+- 证据：`20260609-233704` 的 iter 201 日志直接显示 schedule 回退；同一长训后期出现动作饱和、critic 退化和 `no_reach` 重新主导，但该结果混入了 schedule 回退干扰，不能作为干净续训结论。
+- 结论：resume 语义存在实现问题。继续分析长训前，应先修复 schedule 继承，否则从 checkpoint 续训和从头训练不可比。
+- 改动：`train_ecfppo.py` 新增 `resolve_schedule_total_updates()`；新 checkpoint 保存 `max_iterations` 和 `schedule_total_updates`；resume 新 checkpoint 时沿用保存的 schedule horizon；resume 旧 checkpoint 时 fallback 到 `start_iteration`，避免重新打开 entropy。`ecfppo.py` 将 entropy 退火下限 clamp 到 0，避免超过 horizon 后变成负 entropy 系数。
+- 验证：`tests/test_train_ecfppo.py` 16/16 通过，新增 `test_resume_schedule_total_updates_preserves_annealed_state()` 覆盖从头训练、新 checkpoint resume、旧 checkpoint resume 和 entropy 下限。
+- 后续动作：当前仍在运行的 `20260609-233704` 进程不会自动加载修复后的代码；需要停止后重新从头训练，或用修复后的代码重新 resume。若从头训练，默认 schedule 行为不变。
+
+
+### D011: bounded actor mean 缓解动作均值越界
+
+- 日期：2026-06-10
+- 状态：open
+- 严重性：P0
+- 触发原因：D010 修复后从头训练 `20260610-080058` 仍在后期出现 actor mean 大面积越界，success 高峰后回落，失败重新由 `no_reach` 主导。
+- 相关日志：`legged_gym_go2/logs/ecfppo_go2/20260610-080058/training.log`
+- 现象：该 run 完成 500 iter，峰值 `success=0.289`，最终 `success=0.052`；iter 500 `reach_rate=0.060`、`no_reach=0.940`、`act_mean_clip_ratio=0.8408`、`reach_clip_ratio=0.9262`。分组日志显示 `succ/unsafe/noreach` 三组后期均有较高 `mean_clip`，说明越界不是单一失败组独有。
+- 初步假设：当前 `Normal(mean, std)` 的 `mean` 是 actor 无界线性输出，而环境在执行前 `torch.clip(action, -1, 1)`；当 `mean` 大面积越界时，PPO log_prob/ratio 仍基于 raw action 分布，真实速度命令和能耗却基于 clipped action，导致策略更新与执行效果错配。
+- 代码链路：`EC_EFPPO_ActorCritic.update_distribution()` 生成 `Normal(mean, std)`；`EC_EFPPO.update()` 用同一分布计算 PPO ratio；`HighLevelNavigationEnv.update_velocity_commands()` 和 `update_energy()` 对高层动作裁剪后执行和计能耗；`EC_EFPPO_Buffer.compute_advantages()` 记录 `action_mean_clip_ratio`。
+- 证据：外部参考显示 CleanRL PPO 和 rsl_rl 常用无界高斯加环境裁剪，但 Stable-Baselines3/Spinning Up 的 squashed Gaussian 必须同步做 tanh 后的 log_prob 修正。本项目当前只需要先消除 `mean` 越界，直接切完整 squashed Gaussian 会同时改变 log_prob、entropy 和 buffer 语义，风险更高。
+- 结论：优先采用 `tanh(mean)` bounded mean 作为最小风险改动。该方案保证 actor mean 落在 `[-1, 1]`，保持采样分布仍为 `Normal(bounded_mean, std)`，不需要改 PPO ratio、buffer 或 checkpoint 参数形状。
+- 改动：`rsl_rl/rsl_rl/modules/actor_critic.py` 新增 `bounded_actor_mean`，开启时 `update_distribution()` 和 `act_inference()` 使用 `torch.tanh(raw_mean)`；`legged_gym_go2/legged_gym/envs/go2/go2_config.py` 设置 `bounded_actor_mean=True`；`train_ecfppo.py` 将配置传入 actor-critic；测试新增 bounded mean 覆盖。
+- 验证：`tests/test_ecfppo_actor_critic.py` 14/14 通过，`tests/test_train_ecfppo.py` 16/16 通过，`tests/test_ecfppo.py` 20/20 通过。
+- 后续动作：用新代码从头跑 300-500 iter。若 `act_mean_clip_ratio` 接近 0 且 `action_clip_ratio` 明显下降，再看 `success/reach_rate/no_reach` 是否改善；若采样动作仍大量贴边，再进入完整 squashed Gaussian 方案，届时必须实现 inverse tanh/log-Jacobian 修正和 entropy 口径更新。
+
 ## 决策记录
 
 - 2026-06-05：确认 `std` 未加入 policy optimizer 是确定实现 bug，已按最小修复处理。该改动不改变 EC-EFPPO 的 GAE/target 语义，只恢复参考实现中 policy 分布参数可训练的基本行为。
@@ -682,6 +739,10 @@
 - 2026-06-09：D007 第三轮改动：已补 success 分解诊断和动作分量诊断，且不改变训练逻辑；下一轮用 100-150 iter 短训判断 success 断崖主要来自未到达、不安全，还是某一动作维度异常。
 - 2026-06-09：运行中短训 `20260609-144319` 早期显示 `no_reach` 很高且第 0 维 `act_mean_clip_dim` 明显异常；该信息暂作为下一步分析方向，必须等待 100-150 iter 完成后再形成最终结论。
 - 2026-06-09：D008 确认 EC-EFPPO policy loss 使用的 `advantages_total` 符号方向与 reach-avoid cost-like 语义不一致；已将标准化后的 `advantages_total` 取负再送入 PPO policy loss，并用小张量梯度测试锁定方向。
+- 2026-06-09：`20260609-174808` 证明 D008 后目标驱动恢复，`reach_rate` 峰值到 0.688；当前瓶颈转为未到达和 `unsafe_before_reach` 并存，进入 D009。
+- 2026-06-09：D009 只新增 `succ/unsafe/noreach` 分组诊断日志，不改变训练语义；冒烟训练 `20260609-213244` 已确认 `group` 行正常写入。
+- 2026-06-10：D010 修复 resume 续训 schedule 语义；新 checkpoint 保存 `schedule_total_updates`，旧 checkpoint resume 不再按新的 `max_iterations` 重新打开 entropy。
+- 2026-06-10：`20260610-080058` 干净从头训练仍显示后期 actor mean 大面积越界；D011 先采用 `tanh(mean)` bounded mean，不直接上完整 squashed Gaussian，避免同步改 PPO log_prob、entropy 和 buffer 语义。
 
 ## 记录模板
 

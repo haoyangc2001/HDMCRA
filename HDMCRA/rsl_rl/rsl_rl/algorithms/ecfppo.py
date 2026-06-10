@@ -749,7 +749,9 @@ class EC_EFPPO:
         """
         if not anneal:
             return entropy_coef_init
-        return entropy_coef_init * (total_updates - current_update) / total_updates
+        total_updates = max(int(total_updates), 1)
+        progress_remaining = max(total_updates - current_update, 0) / total_updates
+        return entropy_coef_init * progress_remaining
 
     def get_energy_target_rms_state(self) -> dict:
         """获取 energy_target_rms 状态（用于保存 checkpoint）。"""

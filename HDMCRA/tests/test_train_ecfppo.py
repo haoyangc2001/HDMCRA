@@ -32,6 +32,7 @@ def test_config_class():
     assert cfg.algorithm.log_std_min == -2.0
     assert abs(cfg.algorithm.log_std_max - (-0.6931471805599453)) < 1e-12
     assert cfg.algorithm.entropy_coef == 0.001
+    assert cfg.algorithm.bounded_actor_mean is True
     assert cfg.algorithm.actor_mean_bound == 1.0
     assert cfg.algorithm.actor_mean_bound_coef == 1e-2
     assert cfg.algorithm.anneal_entropy == True
@@ -287,6 +288,106 @@ def test_success_rate_uses_h_values():
     print("[PASS] test_success_rate_uses_h_values")
 
 
+def test_success_metrics_return_group_masks():
+    from legged_gym.scripts.train_ecfppo import compute_reach_avoid_metrics
+
+    T, N = 6, 4
+    g_seq = torch.ones(T, N)
+    h_seq = -torch.ones(T, N)
+    g_seq[2:, 0] = -1.0  # success
+    g_seq[4:, 1] = -1.0  # unsafe before reach
+    h_seq[1:, 1] = 0.5
+    h_seq[3:, 3] = 0.5  # unsafe but no reach
+
+    metrics = compute_reach_avoid_metrics(g_seq, h_seq)
+
+    assert metrics['success_mask'].tolist() == [True, False, False, False]
+    assert metrics['unsafe_before_reach_mask'].tolist() == [False, True, False, False]
+    assert metrics['no_reach_mask'].tolist() == [False, False, True, True]
+    assert metrics['has_reach_mask'].tolist() == [True, True, False, False]
+    assert metrics['first_indices'].tolist() == [2, 4, T, T]
+    print("[PASS] test_success_metrics_return_group_masks")
+
+
+def test_rollout_group_debug_stats():
+    from legged_gym.scripts.train_ecfppo import (
+        compute_reach_avoid_metrics,
+        compute_rollout_group_debug_stats,
+        _format_group_debug,
+    )
+    from rsl_rl.algorithms.ecfppo import EC_EFPPO_Buffer
+
+    T, N, obs_dim, act_dim = 4, 3, 8, 3
+    buf = EC_EFPPO_Buffer(N, T, (obs_dim,), (act_dim,), torch.device('cpu'))
+
+    g_state = torch.ones(T + 1, N)
+    h_state = -torch.ones(T + 1, N)
+    g_state[2:, 0] = -1.0      # env0 success after action t=1
+    g_state[3:, 1] = -1.0      # env1 reaches after action t=2 but unsafe earlier
+    h_state[1:, 1] = 0.5
+
+    for t in range(T):
+        obs = torch.zeros(N, obs_dim)
+        obs[:, 6] = 1.0  # target direction forward in body frame
+        actions = torch.tensor([
+            [0.5, 0.0, 0.0],
+            [1.2, 0.0, 0.0],
+            [-0.5, 0.0, 0.0],
+        ])
+        action_mean = torch.tensor([
+            [0.5, 0.0, 0.0],
+            [1.5, 0.0, 0.0],
+            [-0.5, 0.0, 0.0],
+        ])
+        buf.add(
+            obs=obs,
+            actions=actions,
+            log_probs=torch.zeros(N),
+            values=torch.zeros(N),
+            value_reach=torch.zeros(N),
+            energy=torch.ones(N) * 100.0,
+            energy_consumption=torch.ones(N),
+            g_values=g_state[t],
+            h_values=h_state[t],
+            dones=torch.zeros(N),
+            next_obs=obs,
+            next_energy=torch.ones(N) * 90.0,
+            next_g=g_state[t + 1],
+            next_h=h_state[t + 1],
+            action_mean=action_mean,
+        )
+    buf.advantages_total.copy_(torch.arange(T * N, dtype=torch.float32).reshape(T, N))
+
+    metrics = compute_reach_avoid_metrics(buf.g_values[1:], buf.h_values[1:])
+    stats = compute_rollout_group_debug_stats(buf, metrics)
+
+    assert abs(stats['succ_ratio'] - (1.0 / 3.0)) < 1e-6
+    assert abs(stats['unsafe_ratio'] - (1.0 / 3.0)) < 1e-6
+    assert abs(stats['noreach_ratio'] - (1.0 / 3.0)) < 1e-6
+    assert stats['succ_h_max'] < 0.0
+    assert stats['unsafe_h_max'] > 0.0
+    assert stats['unsafe_mean_clip_dim0'] == 1.0
+    assert stats['noreach_target_align'] < 0.0
+    formatted = _format_group_debug(stats, 'unsafe', act_dim)
+    assert 'unsafe r' in formatted and 'mean_clip' in formatted
+    print("[PASS] test_rollout_group_debug_stats")
+
+
+def test_resume_schedule_total_updates_preserves_annealed_state():
+    from legged_gym.scripts.train_ecfppo import resolve_schedule_total_updates
+
+    assert resolve_schedule_total_updates(1500, 0, checkpoint=None, resume=False) == 1500
+    assert resolve_schedule_total_updates(2000, 1000, checkpoint={"schedule_total_updates": 1500}, resume=True) == 1500
+    assert resolve_schedule_total_updates(1500, 200, checkpoint={}, resume=True) == 200
+
+    # Older checkpoints do not store schedule_total_updates; after the fallback
+    # horizon is exhausted, entropy must stay off instead of becoming negative.
+    assert EC_EFPPO.compute_entropy_coef(0.001, 200, 200, anneal=True) == 0.0
+    assert EC_EFPPO.compute_entropy_coef(0.001, 250, 200, anneal=True) == 0.0
+    assert EC_EFPPO.compute_entropy_coef(0.001, 0, 200, anneal=False) == 0.001
+    print("[PASS] test_resume_schedule_total_updates_preserves_annealed_state")
+
+
 # ---- Test 11: 端到端 mini 训练循环（mock） ----
 def test_mini_training_loop():
     """用随机数据模拟一个完整的 mini 训练循环。"""
@@ -380,6 +481,9 @@ if __name__ == '__main__':
         test_num_obs_includes_energy,
         test_buffer_stores_h_values,
         test_success_rate_uses_h_values,
+        test_success_metrics_return_group_masks,
+        test_rollout_group_debug_stats,
+        test_resume_schedule_total_updates_preserves_annealed_state,
         test_mini_training_loop,
     ]
     passed = 0

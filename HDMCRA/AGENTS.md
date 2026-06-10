@@ -23,24 +23,26 @@ HDMCRA 已经完成 EC-EFPPO 的主体工程实现。当前工作重点是 **训
 
 ## 当前最新诊断焦点
 
-截至 2026-06-09，当前诊断主线是 D007：`actor mean`（策略动作均值）发散导致 `raw action`（原始采样动作）与 `clipped action`（环境实际执行动作）语义错配。
+截至 2026-06-10，当前诊断主线是 D011：D010 修复 resume schedule 后，干净从头训练 `20260610-080058` 仍显示 actor mean 大面积越界，raw policy 与环境 clipped execution 的错配仍是主要风险之一。
 
 已经确认的事实：
 
-- `log_std`（动作标准差的对数参数）已经受控，`std`（动作标准差）不再无界增长。
-- `reach_value_clip=5000.0` 已经抑制极端 reach bootstrap target，但不能单独解决 success 坍塌。
-- `energy_consumption_scale=8.0 / (num_actions * high_level_action_repeat)` 已经把单步最大高层能耗压到约 8，能量触底不再发生在最初 5-6 个高层步。
-- `policy_learning_rate=1e-4` 和 `reach_learning_rate=3e-4` 比最初统一 `1e-3` 更稳定。
-- `actor_mean_bound_coef=1e-2` 明显降低 `act_mean_clip_ratio`（动作均值越界比例）、`energy_loss`（能量价值损失）和 `reach_loss`（到达/避障价值损失）。
-- 但 `success`（成功率）仍会在短暂高峰后断崖下降，所以当前不要继续盲目加大正则或继续长训。
+- D008 已确认 EC-EFPPO 的 policy loss 方向与 reach-avoid cost-like 信号不一致；当前代码已对标准化后的 `advantages_total` 取负再进入 PPO policy loss。
+- D009 已新增 `succ/unsafe/noreach` 分组诊断，不改变训练语义；日志会按成功、安全失败、未到达三组统计 `adv/hmax/align/act/mean_clip`。
+- D010 已修复 resume 续训时 `ent_coef/gamma_reach` 被新的 `max_iterations` 重算的问题；新 checkpoint 会保存 `schedule_total_updates`，旧 checkpoint resume 会 fallback 到 `start_iteration`。
+- 最新干净从头训练 `20260610-080058` 完成 500 iter，峰值 `success=0.289`、最终 `success=0.052`；iter 500 `reach_rate=0.060`、`no_reach=0.940`、`act_mean_clip_ratio=0.8408`、`reach_clip_ratio=0.9262`。
+- 当前环境仍在执行前裁剪高层动作：`update_velocity_commands()` 和 `update_energy()` 都使用 `torch.clip(action, -1, 1)` 后的动作。旧 actor 输出无界 `Normal(mean, std)`，当 `mean` 越界时 PPO log_prob/ratio 与真实执行效果会错配。
+- D011 采用最小风险 bounded mean：`EC_EFPPO_ActorCritic` 新增 `bounded_actor_mean`，Go2 EC-EFPPO 默认开启后用 `torch.tanh(raw_mean)` 作为高斯分布均值；暂不切完整 squashed Gaussian，避免同时改变 log_prob、entropy 和 buffer 语义。
 
-当前下一步：跑 100-150 iter 诊断短训，分析 `reach_rate`（到达目标比例）、`safe_rate`（安全比例）、`unsafe_before_reach`（到达前不安全比例）、`no_reach`（未到达比例）和 `act_mean_clip_dim`（各动作维度均值越界比例）。
+当前下一步：先运行相关测试，再用 D011 代码从头跑 300-500 iter。验证重点是 `act_mean_clip_ratio` 是否接近 0、`action_clip_ratio` 是否下降、`success/reach_rate/no_reach` 是否改善，以及三组 `group` 的 `align/act/mean_clip` 是否出现更清晰区分。
 
 如果接手时已经有新日志，优先判断：
 
-- `no_reach` 高：策略主要是不去目标，优先检查目标驱动、动作幅度是否被压小、advantage 是否给出有效到达信号。
-- `unsafe_before_reach` 高：策略能接近目标但安全失败，优先检查避障约束、`h` 值定义和动作方向。
-- 某个 `act_mean_clip_dim` 显著高：优先检查该动作维度的语义、归一化、速度范围和能耗/安全代价。
+- `act_mean_clip_ratio` 仍高：说明 bounded mean 没有真正生效，优先检查配置是否传入 `EC_EFPPO_ActorCritic`。
+- `act_mean_clip_ratio` 接近 0 但 `action_clip_ratio` 仍高：说明采样动作仍大量撞边，下一步考虑降低 std 或完整 squashed Gaussian。
+- `noreach` 组 `align` 为负或接近 0：仍有目标驱动不足问题，优先检查目标方向观测、policy advantage 和动作投影。
+- `unsafe` 组 `hmax` 明显为正且 `align` 也为正：策略能冲向目标但穿过不安全区域，优先检查安全约束、障碍距离和避障信号权重。
+- `succ` 组 `adv` 没有明显优于 `unsafe/noreach`：combined advantage 仍可能没有正确区分安全成功轨迹，需要回到 `advantages_total` 构造和归一化。
 - `reach_clip_ratio` 高：reach critic 输出仍越过语义边界，优先检查 reach critic 学习率、梯度裁剪或输出约束。
 
 ## 重要原则

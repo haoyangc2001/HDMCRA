@@ -172,7 +172,8 @@ class EC_EFPPO_ActorCritic(nn.Module):
     def __init__(self, num_actor_obs, num_critic_obs, num_actions,
                  hidden_dim=256, num_hidden_layers=2,
                  init_noise_std=1.0, activation='elu',
-                 log_std_min=-5.0, log_std_max=2.0, **kwargs):
+                 log_std_min=-5.0, log_std_max=2.0,
+                 bounded_actor_mean=False, **kwargs):
         if kwargs:
             print("EC_EFPPO_ActorCritic.__init__ got unexpected arguments, "
                   "which will be ignored: " + str([key for key in kwargs.keys()]))
@@ -217,6 +218,7 @@ class EC_EFPPO_ActorCritic(nn.Module):
         # 参考 JAX 实现优化 log_std，再通过 exp(log_std) 得到正标准差。
         self.log_std_min = float(log_std_min)
         self.log_std_max = float(log_std_max)
+        self.bounded_actor_mean = bool(bounded_actor_mean)
         init_noise_std = max(float(init_noise_std), 1e-6)
         init_log_std = torch.log(torch.ones(num_actions) * init_noise_std)
         init_log_std.clamp_(self.log_std_min, self.log_std_max)
@@ -230,6 +232,7 @@ class EC_EFPPO_ActorCritic(nn.Module):
         print(f"EC_EFPPO Actor: {self.actor}")
         print(f"EC_EFPPO Energy Critic: {self.energy_critic}")
         print(f"EC_EFPPO Reach Critic: {self.reach_critic}")
+        print(f"EC_EFPPO bounded actor mean: {self.bounded_actor_mean}")
 
     def _init_weights(self):
         """
@@ -282,8 +285,14 @@ class EC_EFPPO_ActorCritic(nn.Module):
             state_dict["log_std"] = torch.log(old_std).clamp(self.log_std_min, self.log_std_max)
         return super().load_state_dict(state_dict, strict=strict)
 
+    def _bound_action_mean(self, raw_mean):
+        """可选地将 actor mean 映射到环境执行动作边界内。"""
+        if self.bounded_actor_mean:
+            return torch.tanh(raw_mean)
+        return raw_mean
+
     def update_distribution(self, observations):
-        mean = self.actor(observations)
+        mean = self._bound_action_mean(self.actor(observations))
         self.distribution = Normal(mean, mean * 0. + self.std)
 
     @property
@@ -356,4 +365,4 @@ class EC_EFPPO_ActorCritic(nn.Module):
         Returns:
             actions_mean: [N, num_actions]
         """
-        return self.actor(observations)
+        return self._bound_action_mean(self.actor(observations))

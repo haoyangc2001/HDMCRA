@@ -258,7 +258,9 @@ class GO2EC_EFPPOCfgPPO(GO2HighLevelCfgPPO):
         log_std_max = -0.6931471805599453
         # Entropy coefficient。降低并退火，避免持续推大探索噪声。
         entropy_coef = 0.001
-        # D007: actor mean 边界正则，缓解 raw action mean 与环境裁剪执行动作的语义错配。
+        # D011: 将 actor mean 映射到 [-1, 1]，降低 raw policy 与环境裁剪执行的错配。
+        bounded_actor_mean = True
+        # D007: actor mean 边界正则，保留为诊断兜底；bounded mean 开启后通常不再触发。
         actor_mean_bound = 1.0
         actor_mean_bound_coef = 1e-2
         # Whether to anneal entropy coefficient

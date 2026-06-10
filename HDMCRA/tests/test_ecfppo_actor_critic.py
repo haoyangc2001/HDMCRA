@@ -183,6 +183,33 @@ def test_load_old_std_checkpoint():
     print("[PASS] test_load_old_std_checkpoint")
 
 
+# ---- Test 10: bounded actor mean 将策略均值限制在动作边界内 ----
+def test_bounded_actor_mean():
+    model = EC_EFPPO_ActorCritic(
+        num_actor_obs=4,
+        num_critic_obs=4,
+        num_actions=3,
+        hidden_dim=8,
+        num_hidden_layers=1,
+        bounded_actor_mean=True,
+    )
+    with torch.no_grad():
+        model.actor[-1].bias.fill_(5.0)
+    obs = torch.zeros(6, 4)
+
+    raw_mean = model.actor(obs)
+    model.update_distribution(obs)
+    bounded_mean = model.action_mean
+    inference_action = model.act_inference(obs)
+
+    assert torch.all(raw_mean > 1.0), "raw actor mean 应明显越界"
+    assert torch.all(bounded_mean <= 1.0)
+    assert torch.all(bounded_mean >= -1.0)
+    assert torch.allclose(bounded_mean, torch.tanh(raw_mean))
+    assert torch.allclose(inference_action, bounded_mean)
+    print("[PASS] test_bounded_actor_mean")
+
+
 # ---- Test 10: 梯度可以独立回传 ----
 def test_independent_gradients():
     model = make_model()
@@ -262,6 +289,7 @@ if __name__ == '__main__':
         test_orthogonal_init,
         test_learnable_std,
         test_load_old_std_checkpoint,
+        test_bounded_actor_mean,
         test_independent_gradients,
         test_different_obs_dims,
         test_import_from_package,

@@ -134,6 +134,11 @@ def compute_reach_avoid_metrics(
             "unsafe_rate": unsafe_rate,
             "execution_cost": execution_cost,
             "avg_energy_consumption": avg_energy_consumption,
+            "success_mask": success.detach(),
+            "unsafe_before_reach_mask": (has_reach & ~safe_before).detach(),
+            "no_reach_mask": (~has_reach).detach(),
+            "has_reach_mask": has_reach.detach(),
+            "first_indices": first_indices.detach(),
         }
 
 
@@ -159,6 +164,119 @@ def _format_debug_dim_values(debug_stats, prefix: str, num_dims: int, fmt: str =
         value = float(debug_stats.get(f"{prefix}_dim{dim}", float("nan")))
         values.append(format(value, fmt))
     return "[" + ", ".join(values) + "]"
+
+
+def _masked_mean(tensor: torch.Tensor, mask: torch.Tensor) -> float:
+    values = tensor.detach().float()[mask.bool()]
+    if values.numel() == 0:
+        return float("nan")
+    return values.mean().item()
+
+
+def _masked_min(tensor: torch.Tensor, mask: torch.Tensor) -> float:
+    values = tensor.detach().float()[mask.bool()]
+    if values.numel() == 0:
+        return float("nan")
+    return values.min().item()
+
+
+def _masked_max(tensor: torch.Tensor, mask: torch.Tensor) -> float:
+    values = tensor.detach().float()[mask.bool()]
+    if values.numel() == 0:
+        return float("nan")
+    return values.max().item()
+
+
+def compute_rollout_group_debug_stats(buffer, success_metrics: dict) -> dict:
+    """D009: 按成功/不安全/未到达分组诊断 advantage、动作和目标对齐。"""
+    with torch.no_grad():
+        g_seq = buffer.g_values[1:]      # [T, N], post-step state
+        h_seq = buffer.h_values[1:]      # [T, N], post-step state
+        actions = buffer.actions         # [T, N, A], raw sampled action
+        action_mean = buffer.action_mean # [T, N, A], actor mean
+        clipped_actions = actions.clamp(-1.0, 1.0)
+        advantages = buffer.advantages_total
+        obs_seq = buffer.observations[:-1]
+        time_steps, num_envs = g_seq.shape
+        action_dim = actions.size(-1)
+
+        first_indices = success_metrics["first_indices"].to(g_seq.device)
+        time_index = torch.arange(time_steps, device=g_seq.device).unsqueeze(1)
+        active_until_first = time_index <= first_indices.unsqueeze(0)
+
+        groups = {
+            "succ": success_metrics["success_mask"].to(g_seq.device),
+            "unsafe": success_metrics["unsafe_before_reach_mask"].to(g_seq.device),
+            "noreach": success_metrics["no_reach_mask"].to(g_seq.device),
+        }
+
+        stats = {}
+        target_dir = obs_seq[..., 6:8]
+        target_align = (
+            clipped_actions[..., 0] * target_dir[..., 0]
+            + clipped_actions[..., 1] * target_dir[..., 1]
+        )
+        action_mean_clip = (action_mean.abs() >= 1.0 - 1e-6).float()
+
+        for name, env_mask in groups.items():
+            env_mask = env_mask.bool()
+            sample_mask = active_until_first & env_mask.unsqueeze(0)
+            env_count = env_mask.float().sum().item()
+            stats[f"{name}_ratio"] = env_mask.float().mean().item()
+            stats[f"{name}_count"] = env_count
+            if env_count > 0:
+                stats[f"{name}_first_mean"] = first_indices[env_mask].float().mean().item()
+            else:
+                stats[f"{name}_first_mean"] = float("nan")
+            stats[f"{name}_adv_mean"] = _masked_mean(advantages, sample_mask)
+            stats[f"{name}_g_min"] = _masked_min(g_seq, sample_mask)
+            stats[f"{name}_h_max"] = _masked_max(h_seq, sample_mask)
+            stats[f"{name}_target_align"] = _masked_mean(target_align, sample_mask)
+            for dim in range(action_dim):
+                stats[f"{name}_act_abs_dim{dim}"] = _masked_mean(
+                    clipped_actions[..., dim].abs(), sample_mask
+                )
+                stats[f"{name}_mean_clip_dim{dim}"] = _masked_mean(
+                    action_mean_clip[..., dim], sample_mask
+                )
+        return stats
+
+
+def _format_group_debug(group_stats: dict, group: str, num_dims: int) -> str:
+    act_abs = _format_debug_dim_values(group_stats, f"{group}_act_abs", num_dims, fmt=".3f")
+    mean_clip = _format_debug_dim_values(group_stats, f"{group}_mean_clip", num_dims, fmt=".3f")
+    return (
+        f"{group} r {group_stats.get(f'{group}_ratio', float('nan')):.3f} "
+        f"first {group_stats.get(f'{group}_first_mean', float('nan')):.1f} "
+        f"adv {group_stats.get(f'{group}_adv_mean', float('nan')):.2e} "
+        f"gmin {group_stats.get(f'{group}_g_min', float('nan')):.1f} "
+        f"hmax {group_stats.get(f'{group}_h_max', float('nan')):.1f} "
+        f"align {group_stats.get(f'{group}_target_align', float('nan')):.3f} "
+        f"act {act_abs} "
+        f"mean_clip {mean_clip}"
+    )
+
+
+def resolve_schedule_total_updates(
+    max_iterations: int,
+    start_iteration: int,
+    checkpoint: dict = None,
+    resume: bool = False,
+) -> int:
+    """Resolve annealing horizon without resetting schedules on resume.
+
+    New checkpoints store ``schedule_total_updates``. Older checkpoints do not,
+    so resumed runs fall back to the checkpoint iteration to preserve the already
+    annealed state instead of reopening exploration.
+    """
+    checkpoint = checkpoint or {}
+    for key in ("schedule_total_updates", "max_iterations"):
+        value = checkpoint.get(key)
+        if value is not None:
+            return max(int(value), 1)
+    if resume and start_iteration > 0:
+        return max(int(start_iteration), 1)
+    return max(int(max_iterations), 1)
 
 
 def train_ecfppo(args) -> None:
@@ -199,6 +317,7 @@ def train_ecfppo(args) -> None:
         activation=net_cfg.activation,
         log_std_min=getattr(train_cfg.algorithm, 'log_std_min', -5.0),
         log_std_max=getattr(train_cfg.algorithm, 'log_std_max', 2.0),
+        bounded_actor_mean=getattr(train_cfg.algorithm, 'bounded_actor_mean', False),
     )
 
     # ---- 初始化 EC_EFPPO ----
@@ -231,6 +350,7 @@ def train_ecfppo(args) -> None:
     alg.init_storage(num_envs, horizon, obs_shape, action_shape)
 
     # ---- 恢复 checkpoint（如果指定）----
+    ckpt = None
     if train_cfg.runner.resume:
         if not train_cfg.runner.resume_path or not os.path.exists(train_cfg.runner.resume_path):
             raise FileNotFoundError(
@@ -272,7 +392,12 @@ def train_ecfppo(args) -> None:
 
     max_iterations = train_cfg.runner.max_iterations
     save_interval = train_cfg.runner.save_interval
-    total_updates = max_iterations
+    total_updates = resolve_schedule_total_updates(
+        max_iterations,
+        start_iteration,
+        checkpoint=ckpt,
+        resume=train_cfg.runner.resume,
+    )
 
     # ---- 训练循环 ----
     obs, g_vals, h_vals, energy = env.reset()
@@ -361,6 +486,7 @@ def train_ecfppo(args) -> None:
         execution_cost = success_metrics['execution_cost']
         avg_energy = success_metrics['avg_energy_consumption']
         debug_stats = dict(getattr(alg.buffer, 'debug_stats', {}))
+        group_debug_stats = compute_rollout_group_debug_stats(alg.buffer, success_metrics)
 
         # ---- 三路 PPO 更新 ----
         loss_dict = alg.update(
@@ -441,6 +567,15 @@ def train_ecfppo(args) -> None:
                 print(debug_line)
                 log_fp.write(debug_line + "\n")
 
+                group_line = (
+                    f"group {iteration + 1:05d} | "
+                    f"{_format_group_debug(group_debug_stats, 'succ', action_shape[0])} | "
+                    f"{_format_group_debug(group_debug_stats, 'unsafe', action_shape[0])} | "
+                    f"{_format_group_debug(group_debug_stats, 'noreach', action_shape[0])}"
+                )
+                print(group_line)
+                log_fp.write(group_line + "\n")
+
             log_fp.flush()
             interval_start = time.time()
 
@@ -457,6 +592,8 @@ def train_ecfppo(args) -> None:
                     "energy_optimizer": alg.energy_optimizer.state_dict(),
                     "reach_optimizer": alg.reach_optimizer.state_dict(),
                     "iteration": iteration + 1,
+                    "max_iterations": max_iterations,
+                    "schedule_total_updates": total_updates,
                     "success_rate": success_rate,
                     "execution_cost": execution_cost,
                     "avg_energy_consumption": avg_energy,
@@ -487,6 +624,8 @@ def train_ecfppo(args) -> None:
             "energy_optimizer": alg.energy_optimizer.state_dict(),
             "reach_optimizer": alg.reach_optimizer.state_dict(),
             "iteration": max_iterations,
+            "max_iterations": max_iterations,
+            "schedule_total_updates": total_updates,
             "success_rate": success_rate,
             "avg_energy_consumption": avg_energy,
             "low_level_model_path": train_cfg.runner.low_level_model_path,
