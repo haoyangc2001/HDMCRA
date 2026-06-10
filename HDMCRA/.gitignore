@@ -1,0 +1,7 @@
+# Training checkpoints
+legged_gym_go2/logs/**/model_*.pt
+legged_gym_go2/logs/**/model_final.pt
+
+# Python cache
+__pycache__/
+*.py[cod]

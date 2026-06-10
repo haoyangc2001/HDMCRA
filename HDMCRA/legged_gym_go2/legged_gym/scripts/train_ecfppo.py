@@ -341,6 +341,8 @@ def train_ecfppo(args) -> None:
         entropy_coef=train_cfg.algorithm.entropy_coef,
         actor_mean_bound=getattr(train_cfg.algorithm, 'actor_mean_bound', 1.0),
         actor_mean_bound_coef=getattr(train_cfg.algorithm, 'actor_mean_bound_coef', 0.0),
+        actor_raw_mean_bound=getattr(train_cfg.algorithm, 'actor_raw_mean_bound', 2.0),
+        actor_raw_mean_bound_coef=getattr(train_cfg.algorithm, 'actor_raw_mean_bound_coef', 0.0),
         max_grad_norm=train_cfg.algorithm.max_grad_norm,
         max_grad_norm_energy=max_grad_norm_energy,
         reach_value_clip=getattr(train_cfg.algorithm, 'reach_value_clip', None),
@@ -427,6 +429,7 @@ def train_ecfppo(args) -> None:
         for step in range(horizon):
             actions, log_probs, values_energy, values_reach = alg.act(obs)
             action_mean = actor_critic.action_mean.detach()
+            raw_action_mean = actor_critic.action_raw_mean.detach()
 
             next_obs, next_g, next_h, dones, infos, next_energy, energy_consumption = env.step(actions)
 
@@ -454,6 +457,7 @@ def train_ecfppo(args) -> None:
                 next_g=next_g,
                 next_h=next_h,
                 action_mean=action_mean,
+                raw_action_mean=raw_action_mean,
             )
 
             obs = next_obs
@@ -510,6 +514,7 @@ def train_ecfppo(args) -> None:
                 f"energy_loss {loss_dict['energy_loss']:.5f} | "
                 f"reach_loss {loss_dict['reach_loss']:.5f} | "
                 f"mean_bound_loss {loss_dict.get('mean_bound_loss', 0.0):.5f} | "
+                f"raw_mean_bound_loss {loss_dict.get('raw_mean_bound_loss', 0.0):.5f} | "
                 f"entropy {loss_dict['entropy_loss']:.4f} | "
                 f"gamma_reach {gamma_reach:.6f} | "
                 f"ent_coef {entropy_coef:.5f} | "
@@ -530,6 +535,12 @@ def train_ecfppo(args) -> None:
                 clipped_act_abs_dim = _format_debug_dim_values(
                     debug_stats, "clipped_action_abs_mean", action_shape[0]
                 )
+                raw_act_mean_abs_dim = _format_debug_dim_values(
+                    debug_stats, "raw_action_mean_abs_mean", action_shape[0]
+                )
+                raw_act_mean_clip_dim = _format_debug_dim_values(
+                    debug_stats, "raw_action_mean_clip_ratio", action_shape[0], fmt=".4f"
+                )
                 debug_line = (
                     f"debug {iteration + 1:05d} | "
                     f"std_mean {std.mean().item():.4f} | std_min {std.min().item():.4f} | std_max {std.max().item():.4f} | "
@@ -542,9 +553,13 @@ def train_ecfppo(args) -> None:
                     f"act_abs [{debug_stats.get('action_abs_mean', float('nan')):.3e}, {debug_stats.get('action_abs_max', float('nan')):.3e}] | "
                     f"act_mean_abs [{debug_stats.get('action_mean_abs_mean', float('nan')):.3e}, {debug_stats.get('action_mean_abs_max', float('nan')):.3e}] | "
                     f"act_mean_clip_ratio {debug_stats.get('action_mean_clip_ratio', float('nan')):.4f} | "
+                    f"raw_mean_abs [{debug_stats.get('raw_action_mean_abs_mean', float('nan')):.3e}, {debug_stats.get('raw_action_mean_abs_max', float('nan')):.3e}] | "
+                    f"raw_mean_clip_ratio {debug_stats.get('raw_action_mean_clip_ratio', float('nan')):.4f} | "
                     f"clipped_act_abs [{debug_stats.get('clipped_action_abs_mean', float('nan')):.3e}, {debug_stats.get('clipped_action_abs_max', float('nan')):.3e}] | "
                     f"act_mean_abs_dim {act_mean_abs_dim} | "
                     f"act_mean_clip_dim {act_mean_clip_dim} | "
+                    f"raw_mean_abs_dim {raw_act_mean_abs_dim} | "
+                    f"raw_mean_clip_dim {raw_act_mean_clip_dim} | "
                     f"clipped_act_abs_dim {clipped_act_abs_dim} | "
                     f"init_energy [{debug_stats.get('init_energy_min', float('nan')):.3e}, {debug_stats.get('init_energy_mean', float('nan')):.3e}, {debug_stats.get('init_energy_max', float('nan')):.3e}] | "
                     f"v_reach [{debug_stats.get('values_reach_min', float('nan')):.3e}, {debug_stats.get('values_reach_max', float('nan')):.3e}] | "

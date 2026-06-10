@@ -260,6 +260,9 @@ class GO2EC_EFPPOCfgPPO(GO2HighLevelCfgPPO):
         entropy_coef = 0.001
         # D011: 将 actor mean 映射到 [-1, 1]，降低 raw policy 与环境裁剪执行的错配。
         bounded_actor_mean = True
+        # D012: 约束 tanh 前 raw mean，避免 bounded mean 长期卡在饱和边界。
+        actor_raw_mean_bound = 2.0
+        actor_raw_mean_bound_coef = 1e-3
         # D007: actor mean 边界正则，保留为诊断兜底；bounded mean 开启后通常不再触发。
         actor_mean_bound = 1.0
         actor_mean_bound_coef = 1e-2

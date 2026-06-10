@@ -469,13 +469,36 @@ def test_ecefppo_update():
     assert 'reach_loss' in loss_dict
     assert 'entropy_loss' in loss_dict
     assert 'mean_bound_loss' in loss_dict
+    assert 'raw_mean_bound_loss' in loss_dict
     assert loss_dict['mean_bound_loss'] >= 0.0
+    assert loss_dict['raw_mean_bound_loss'] >= 0.0
     assert all(np.isfinite(v) for v in loss_dict.values())
     print(f"  Losses: actor={loss_dict['actor_loss']:.4f}, "
           f"energy={loss_dict['energy_loss']:.4f}, "
           f"reach={loss_dict['reach_loss']:.4f}, "
           f"entropy={loss_dict['entropy_loss']:.4f}")
     print("[PASS] test_ecefppo_update")
+
+
+def test_actor_raw_mean_bound_loss():
+    """D012: raw mean 正则只惩罚 tanh 前 logits 进入深度饱和区。"""
+    model = EC_EFPPO_ActorCritic(
+        num_actor_obs=4, num_critic_obs=4, num_actions=3,
+        hidden_dim=8, num_hidden_layers=2,
+    )
+    alg = EC_EFPPO(
+        actor_critic=model, actor_raw_mean_bound=2.0,
+        actor_raw_mean_bound_coef=1e-3, device='cpu',
+    )
+
+    inside = torch.tensor([[0.0, 1.5, -2.0]])
+    outside = torch.tensor([[2.5, -3.0, 0.0]])
+
+    assert alg._actor_raw_mean_bound_loss(inside).item() == 0.0
+    assert alg._actor_raw_mean_bound_loss(outside).item() > 0.0
+    assert alg.actor_raw_mean_bound == 2.0
+    assert alg.actor_raw_mean_bound_coef == 1e-3
+    print("[PASS] test_actor_raw_mean_bound_loss")
 
 
 def test_actor_mean_bound_loss():
@@ -666,6 +689,7 @@ if __name__ == '__main__':
         test_policy_optimizer_updates_std,
         test_ecefppo_act,
         test_ecefppo_update,
+        test_actor_raw_mean_bound_loss,
         test_actor_mean_bound_loss,
         test_policy_gae_direction_for_cost_like_advantages,
         test_independent_gradient_flow,

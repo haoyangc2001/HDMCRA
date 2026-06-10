@@ -200,9 +200,11 @@ def test_bounded_actor_mean():
     raw_mean = model.actor(obs)
     model.update_distribution(obs)
     bounded_mean = model.action_mean
+    stored_raw_mean = model.action_raw_mean
     inference_action = model.act_inference(obs)
 
     assert torch.all(raw_mean > 1.0), "raw actor mean 应明显越界"
+    assert torch.allclose(stored_raw_mean, raw_mean)
     assert torch.all(bounded_mean <= 1.0)
     assert torch.all(bounded_mean >= -1.0)
     assert torch.allclose(bounded_mean, torch.tanh(raw_mean))

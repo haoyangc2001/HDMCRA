@@ -74,6 +74,8 @@ class EC_EFPPO_Buffer:
         self.actions = torch.zeros(horizon, num_envs, act_dim, device=device)
         # D005 诊断：记录 actor 分布均值，用于区分动作贴边来自均值还是采样噪声。
         self.action_mean = torch.zeros(horizon, num_envs, act_dim, device=device)
+        self.raw_action_mean = torch.zeros(horizon, num_envs, act_dim, device=device)
+        self.raw_action_mean_bound = 2.0
         self.log_probs = torch.zeros(horizon, num_envs, device=device)
 
         # Energy value function 预测
@@ -159,6 +161,7 @@ class EC_EFPPO_Buffer:
         next_g: torch.Tensor,
         next_h: torch.Tensor,
         action_mean: torch.Tensor = None,
+        raw_action_mean: torch.Tensor = None,
     ) -> None:
         """
         存储单步 transition 数据。
@@ -167,6 +170,7 @@ class EC_EFPPO_Buffer:
             obs: [N, obs_dim] 当前高层决策前的状态 s_t 观测
             actions: [N, act_dim] 在 s_t 采样的高层动作 a_t
             action_mean: [N, act_dim] actor 在 s_t 输出的动作分布均值，用于诊断动作贴边来源
+            raw_action_mean: [N, act_dim] tanh bounded mean 前的 actor 原始输出，用于诊断饱和来源
             log_probs: [N] a_t 在 s_t 下的 log 概率
             values: [N] energy critic 在 s_t 的预测
             value_reach: [N] reach critic 在 s_t 的预测
@@ -184,6 +188,7 @@ class EC_EFPPO_Buffer:
         self.observations[idx] = obs
         self.actions[idx] = actions
         self.action_mean[idx] = actions if action_mean is None else action_mean
+        self.raw_action_mean[idx] = self.action_mean[idx] if raw_action_mean is None else raw_action_mean
         self.log_probs[idx] = log_probs
         self.values[idx] = values
         self.value_reach[idx] = value_reach
@@ -376,17 +381,23 @@ class EC_EFPPO_Buffer:
 
         action_abs = self.actions.detach().abs()
         action_mean_abs = self.action_mean.detach().abs()
+        raw_action_mean_abs = self.raw_action_mean.detach().abs()
         clipped_action_abs = self.actions.detach().clamp(-1.0, 1.0).abs()
         action_clip_mask = action_abs >= 1.0 - 1e-6
         action_mean_clip_mask = action_mean_abs >= 1.0 - 1e-6
+        raw_action_mean_clip_mask = raw_action_mean_abs >= self.raw_action_mean_bound - 1e-6
         self.debug_stats.update(self._stats("action_abs", action_abs))
         self.debug_stats.update(self._stats("action_mean_abs", action_mean_abs))
+        self.debug_stats.update(self._stats("raw_action_mean_abs", raw_action_mean_abs))
         self.debug_stats.update(self._stats("clipped_action_abs", clipped_action_abs))
         self.debug_stats.update(self._dim_stats("action_mean_abs_mean", action_mean_abs))
         self.debug_stats.update(self._dim_stats("action_mean_clip_ratio", action_mean_clip_mask.float()))
+        self.debug_stats.update(self._dim_stats("raw_action_mean_abs_mean", raw_action_mean_abs))
+        self.debug_stats.update(self._dim_stats("raw_action_mean_clip_ratio", raw_action_mean_clip_mask.float()))
         self.debug_stats.update(self._dim_stats("clipped_action_abs_mean", clipped_action_abs))
         self.debug_stats["action_clip_ratio"] = action_clip_mask.float().mean().item()
         self.debug_stats["action_mean_clip_ratio"] = action_mean_clip_mask.float().mean().item()
+        self.debug_stats["raw_action_mean_clip_ratio"] = raw_action_mean_clip_mask.float().mean().item()
 
     def _flat_view(self) -> EC_EFPPO_Batch:
         """将 [T, N, ...] 数据展平为 [T*N, ...]。"""
@@ -462,6 +473,8 @@ class EC_EFPPO:
         entropy_coef: float = 0.01,
         actor_mean_bound: float = 1.0,
         actor_mean_bound_coef: float = 0.0,
+        actor_raw_mean_bound: float = 2.0,
+        actor_raw_mean_bound_coef: float = 0.0,
         max_grad_norm: float = 0.5,
         max_grad_norm_energy: float = None,
         reach_value_clip: float = None,
@@ -494,6 +507,8 @@ class EC_EFPPO:
         self.entropy_coef = entropy_coef
         self.actor_mean_bound = float(actor_mean_bound)
         self.actor_mean_bound_coef = float(actor_mean_bound_coef)
+        self.actor_raw_mean_bound = float(actor_raw_mean_bound)
+        self.actor_raw_mean_bound_coef = float(actor_raw_mean_bound_coef)
         self.max_grad_norm = max_grad_norm
         # Energy critic 使用更严格的梯度裁剪，防止 loss 爆炸
         # 如果未指定，默认使用 max_grad_norm 的 1/5
@@ -520,6 +535,10 @@ class EC_EFPPO:
         self.energy_target_rms = RunningMeanStd(shape=(), device=self.device)
 
         self.buffer = None
+
+    def _actor_raw_mean_bound_loss(self, raw_action_mean: torch.Tensor) -> torch.Tensor:
+        """惩罚 tanh 前 actor raw mean 进入深度饱和区。"""
+        return torch.relu(raw_action_mean.abs() - self.actor_raw_mean_bound).pow(2).mean()
 
     def _actor_mean_bound_loss(self, action_mean: torch.Tensor) -> torch.Tensor:
         """惩罚 actor mean 超出环境执行动作边界的部分。"""
@@ -548,6 +567,7 @@ class EC_EFPPO:
             num_envs, horizon, obs_shape, action_shape, self.device,
             reach_value_clip=self.reach_value_clip,
         )
+        self.buffer.raw_action_mean_bound = self.actor_raw_mean_bound
 
     def act(
         self, obs: torch.Tensor, critic_obs: torch.Tensor = None
@@ -594,6 +614,7 @@ class EC_EFPPO:
         reach_loss_acc = 0.0
         entropy_loss_acc = 0.0
         mean_bound_loss_acc = 0.0
+        raw_mean_bound_loss_acc = 0.0
         batch_count = 0
 
         for batch in self.buffer.iter_batches(
@@ -629,13 +650,16 @@ class EC_EFPPO:
             policy_loss = -torch.min(loss_actor1, loss_actor2).mean()
 
             # 总策略损失 = PPO policy loss - entropy bonus + actor mean 边界正则。
-            # 正则只惩罚均值越过环境执行边界的部分，不改变采样分布定义。
+            # bounded mean 开启后，raw mean 正则用于避免 tanh logits 长期进入饱和区。
             action_mean = self.actor_critic.action_mean
+            raw_action_mean = self.actor_critic.action_raw_mean
             mean_bound_loss = self._actor_mean_bound_loss(action_mean)
+            raw_mean_bound_loss = self._actor_raw_mean_bound_loss(raw_action_mean)
             actor_total_loss = (
                 policy_loss
                 - entropy_coef * entropy
                 + self.actor_mean_bound_coef * mean_bound_loss
+                + self.actor_raw_mean_bound_coef * raw_mean_bound_loss
             )
 
             self.policy_optimizer.zero_grad()
@@ -698,6 +722,7 @@ class EC_EFPPO:
             reach_loss_acc += reach_loss.item()
             entropy_loss_acc += entropy.item()
             mean_bound_loss_acc += mean_bound_loss.item()
+            raw_mean_bound_loss_acc += raw_mean_bound_loss.item()
             batch_count += 1
 
         # 清空缓冲区
@@ -710,6 +735,7 @@ class EC_EFPPO:
             "reach_loss": reach_loss_acc / num_updates,
             "entropy_loss": entropy_loss_acc / num_updates,
             "mean_bound_loss": mean_bound_loss_acc / num_updates,
+            "raw_mean_bound_loss": raw_mean_bound_loss_acc / num_updates,
         }
 
     @staticmethod

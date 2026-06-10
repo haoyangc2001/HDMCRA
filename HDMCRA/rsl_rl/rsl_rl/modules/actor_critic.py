@@ -224,6 +224,7 @@ class EC_EFPPO_ActorCritic(nn.Module):
         init_log_std.clamp_(self.log_std_min, self.log_std_max)
         self.log_std = nn.Parameter(init_log_std)
         self.distribution = None
+        self.raw_action_mean = None
         Normal.set_default_validate_args = False
 
         # ---- Weight initialization (aligned with JAX version) ----
@@ -292,12 +293,18 @@ class EC_EFPPO_ActorCritic(nn.Module):
         return raw_mean
 
     def update_distribution(self, observations):
-        mean = self._bound_action_mean(self.actor(observations))
+        raw_mean = self.actor(observations)
+        self.raw_action_mean = raw_mean
+        mean = self._bound_action_mean(raw_mean)
         self.distribution = Normal(mean, mean * 0. + self.std)
 
     @property
     def action_mean(self):
         return self.distribution.mean
+
+    @property
+    def action_raw_mean(self):
+        return self.raw_action_mean
 
     @property
     def action_std(self):
