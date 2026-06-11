@@ -478,6 +478,8 @@ class EC_EFPPO:
         max_grad_norm: float = 0.5,
         max_grad_norm_energy: float = None,
         reach_value_clip: float = None,
+        reach_value_bound: float = None,
+        reach_value_bound_coef: float = 0.0,
         anneal_entropy: bool = False,
         device: str = "cpu",
         **kwargs,
@@ -514,6 +516,8 @@ class EC_EFPPO:
         # 如果未指定，默认使用 max_grad_norm 的 1/5
         self.max_grad_norm_energy = max_grad_norm_energy if max_grad_norm_energy is not None else max_grad_norm / 5.0
         self.reach_value_clip = reach_value_clip
+        self.reach_value_bound = reach_value_clip if reach_value_bound is None else float(reach_value_bound)
+        self.reach_value_bound_coef = float(reach_value_bound_coef)
         self.anneal_entropy = anneal_entropy
 
         # 三个独立优化器（对应 JAX 版三个独立 TrainState）
@@ -543,6 +547,12 @@ class EC_EFPPO:
     def _actor_mean_bound_loss(self, action_mean: torch.Tensor) -> torch.Tensor:
         """惩罚 actor mean 超出环境执行动作边界的部分。"""
         return torch.relu(action_mean.abs() - self.actor_mean_bound).pow(2).mean()
+
+    def _reach_value_bound_loss(self, values_reach: torch.Tensor) -> torch.Tensor:
+        """惩罚 reach critic 输出越过语义边界的部分。"""
+        if self.reach_value_bound is None or self.reach_value_bound_coef <= 0.0:
+            return values_reach.new_zeros(())
+        return torch.relu(values_reach.abs() - self.reach_value_bound).pow(2).mean()
 
     @staticmethod
     def _policy_gae_from_advantages(advantages_total: torch.Tensor) -> torch.Tensor:
@@ -615,6 +625,7 @@ class EC_EFPPO:
         entropy_loss_acc = 0.0
         mean_bound_loss_acc = 0.0
         raw_mean_bound_loss_acc = 0.0
+        reach_value_bound_loss_acc = 0.0
         batch_count = 0
 
         for batch in self.buffer.iter_batches(
@@ -707,7 +718,11 @@ class EC_EFPPO:
                 0.5
                 * torch.max(value_losses_reach, value_losses_clipped_reach).mean()
             )
-            reach_total_loss = self.value_loss_coef * reach_loss
+            reach_value_bound_loss = self._reach_value_bound_loss(values_h)
+            reach_total_loss = (
+                self.value_loss_coef * reach_loss
+                + self.reach_value_bound_coef * reach_value_bound_loss
+            )
 
             self.reach_optimizer.zero_grad()
             reach_total_loss.backward()
@@ -723,6 +738,7 @@ class EC_EFPPO:
             entropy_loss_acc += entropy.item()
             mean_bound_loss_acc += mean_bound_loss.item()
             raw_mean_bound_loss_acc += raw_mean_bound_loss.item()
+            reach_value_bound_loss_acc += reach_value_bound_loss.item()
             batch_count += 1
 
         # 清空缓冲区
@@ -736,6 +752,7 @@ class EC_EFPPO:
             "entropy_loss": entropy_loss_acc / num_updates,
             "mean_bound_loss": mean_bound_loss_acc / num_updates,
             "raw_mean_bound_loss": raw_mean_bound_loss_acc / num_updates,
+            "reach_value_bound_loss": reach_value_bound_loss_acc / num_updates,
         }
 
     @staticmethod

@@ -23,7 +23,7 @@ HDMCRA 已经完成 EC-EFPPO 的主体工程实现。当前工作重点是 **训
 
 ## 当前最新诊断焦点
 
-截至 2026-06-10，当前诊断主线是 D013：D012 的 raw mean（actor 原始均值）诊断和正则恢复了早中期到达能力，但最新训练 `20260610-174615` 显示 `actor_raw_mean_bound_coef=1e-3`（actor 原始均值越界惩罚系数）仍偏弱，raw logits（tanh 前输出）后期继续饱和并导致 `no_reach`（未到达）重新主导失败。
+截至 2026-06-11，当前诊断主线是 D014：D013 的 `actor_raw_mean_bound_coef=1e-2`（actor 原始均值越界惩罚系数）明显降低了 `act_mean_clip_ratio`（动作均值贴边比例），但最新训练 `20260610-212458` 仍显示后期 `reach_clip_ratio`（reach critic 裁剪比例）和 `reach_loss`（到达价值损失）偏高，`no_reach`（未到达）重新主导失败。
 
 已经确认的事实：
 
@@ -33,9 +33,10 @@ HDMCRA 已经完成 EC-EFPPO 的主体工程实现。当前工作重点是 **训
 - D011 采用 `bounded_actor_mean=True` 后，`action_mean` 不再无界越过 `[-1, 1]`，`mean_bound_loss` 变为 0，采样动作裁剪比例从上一轮后段约 `0.77-0.84` 降到约 `0.50`。
 - 但 `20260610-133801` 截至 iter 446 的峰值只有 `success=0.115`、`reach_rate=0.196`；从 iter 200 起 `act_mean_clip_ratio≈0.99`，说明 bounded mean 几乎全卡在 `tanh` 边界，后段 `no_reach≈0.935`。
 - D012 增加 raw mean（actor 原始均值）诊断和正则：`EC_EFPPO_ActorCritic` 保存 `raw_action_mean`（actor 原始动作均值），buffer/debug 记录 raw mean 统计，policy loss（策略损失）新增 `actor_raw_mean_bound`（actor 原始均值边界）正则。`20260610-174615` 证明该方向有效，峰值 `success=0.356`（成功率）、`reach_rate=0.700`（到达率），但后期 `raw_mean_clip_ratio`（原始均值越界比例）仍在 0.65-0.94 区间，最终 `no_reach=0.969`（未到达比例）。
-- D013 将 Go2 默认 `actor_raw_mean_bound_coef`（actor 原始均值越界惩罚系数）从 `1e-3` 提高到 `1e-2`，保持 `actor_raw_mean_bound=2.0`（actor 原始均值边界）不变，先验证更强正则是否能压低 raw logits 饱和。
+- D013 将 Go2 默认 `actor_raw_mean_bound_coef`（actor 原始均值越界惩罚系数）从 `1e-3` 提高到 `1e-2`，保持 `actor_raw_mean_bound=2.0`（actor 原始均值边界）不变。`20260610-212458` 证明动作均值贴边明显缓解，iter 500 `act_mean_clip_ratio=0.234`（动作均值贴边比例），但峰值 `success=0.281`（成功率）低于 D012 的 `0.356`，后期 `no_reach=0.912`（未到达比例）。
+- D014 新增 reach critic（到达价值网络）输出边界正则：`reach_value_bound=5000.0`（到达价值输出边界）、`reach_value_bound_coef=1e-4`（到达价值越界惩罚系数），目标是给越过 `reach_value_clip`（到达价值裁剪）语义边界的 `values_reach`（到达价值预测）提供直接梯度。
 
-当前下一步：先运行相关测试，再用 D013 配置从头跑 200-300 iter。验证重点是 `raw_mean_clip_ratio`（原始均值越界比例）是否明显下降、`act_mean_clip_ratio`（动作均值贴边比例）是否不再后期回升、`action_clip_ratio`（采样动作裁剪比例）是否低于 0.5，以及 `success/reach_rate/no_reach`（成功率/到达率/未到达比例）是否稳定。
+当前下一步：先运行相关测试，再用 D014 配置从头跑 200-300 iter。验证重点是 `reach_clip_ratio`（reach critic 裁剪比例）和 `reach_loss`（到达价值损失）是否下降，`values_reach`（到达价值预测）是否不再长期到 `-2e4/-4e4` 量级，同时确认 `act_mean_clip_ratio/raw_mean_clip_ratio`（动作均值贴边比例/原始均值越界比例）没有回退。
 
 如果接手时已经有新日志，优先判断：
 
@@ -44,7 +45,7 @@ HDMCRA 已经完成 EC-EFPPO 的主体工程实现。当前工作重点是 **训
 - `act_mean_clip_ratio`（动作均值贴边比例）接近 0 但 `noreach`（未到达）高：动作边界问题缓解后仍目标驱动不足，回到目标方向观测、policy advantage（策略优势）和动作投影。
 - `unsafe`（不安全失败）组 `hmax`（最大安全约束值）明显为正且 `align`（动作目标对齐度）也为正：策略能冲向目标但穿过不安全区域，优先检查安全约束、障碍距离和避障信号权重。
 - `succ`（成功）组 `adv`（优势）没有明显优于 `unsafe/noreach`（不安全失败/未到达）：combined advantage（组合优势）仍可能没有正确区分安全成功轨迹，需要回到 `advantages_total`（组合优势）构造和归一化。
-- `reach_clip_ratio`（reach critic 裁剪比例）高：reach critic（到达价值网络）输出仍越过语义边界，优先检查 reach critic 学习率、梯度裁剪或输出约束。
+- `reach_clip_ratio`（reach critic 裁剪比例）高：reach critic（到达价值网络）输出仍越过语义边界，优先检查 `reach_value_bound_loss`（到达价值边界损失）、reach critic 学习率、梯度裁剪或输出约束。
 
 ## 重要原则
 
@@ -76,7 +77,8 @@ HDMCRA 已经完成 EC-EFPPO 的主体工程实现。当前工作重点是 **训
 - 当前 `log_std_max=-0.6931471805599453`，对应最大 `std≈0.5`。
 - 当前 `actor_mean_bound=1.0`、`actor_mean_bound_coef=1e-2`，用于惩罚 actor mean 超出动作边界。
 - 当前三路学习率为 `policy_learning_rate=1e-4`、`energy_learning_rate=1e-3`、`reach_learning_rate=3e-4`。
-- 当前 `reach_value_clip=5000.0`，用于限制 reach bootstrap value 的语义范围。
+- 当前 `reach_value_clip=5000.0`，用于限制 reach bootstrap value（到达引导值）的语义范围。
+- 当前 `reach_value_bound=5000.0`、`reach_value_bound_coef=1e-4`，用于约束 reach critic（到达价值网络）输出本身不要长期越过语义边界。
 - 当前 `debug_stats_interval=10`，训练日志每 10 iter 输出分组 debug 字段。
 - P0/P1 修复前的 success rate 和 energy consumption 统计只能作为历史调试参考。
 - 新的训练结论必须基于修复后的代码和最新训练日志。

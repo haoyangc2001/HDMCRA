@@ -40,6 +40,8 @@ def test_config_class():
     assert cfg.algorithm.anneal_entropy == True
     assert cfg.algorithm.max_grad_norm == 0.5
     assert cfg.algorithm.reach_value_clip == 5000.0
+    assert cfg.algorithm.reach_value_bound == 5000.0
+    assert cfg.algorithm.reach_value_bound_coef == 1e-4
     assert cfg.algorithm.learning_rate == 1e-3
     assert cfg.algorithm.policy_learning_rate == 1e-4
     assert cfg.algorithm.energy_learning_rate == 1e-3
@@ -109,6 +111,9 @@ def test_alg_with_config():
         actor_raw_mean_bound=cfg.algorithm.actor_raw_mean_bound,
         actor_raw_mean_bound_coef=cfg.algorithm.actor_raw_mean_bound_coef,
         max_grad_norm=cfg.algorithm.max_grad_norm,
+        reach_value_clip=cfg.algorithm.reach_value_clip,
+        reach_value_bound=cfg.algorithm.reach_value_bound,
+        reach_value_bound_coef=cfg.algorithm.reach_value_bound_coef,
         anneal_entropy=cfg.algorithm.anneal_entropy,
         device='cpu',
     )
@@ -123,6 +128,9 @@ def test_alg_with_config():
     assert alg.actor_mean_bound_coef == 1e-2
     assert alg.actor_raw_mean_bound == 2.0
     assert alg.actor_raw_mean_bound_coef == 1e-2
+    assert alg.reach_value_clip == 5000.0
+    assert alg.reach_value_bound == 5000.0
+    assert alg.reach_value_bound_coef == 1e-4
     assert alg.policy_optimizer.param_groups[0]['lr'] == 1e-4
     assert alg.energy_optimizer.param_groups[0]['lr'] == 1e-3
     assert alg.reach_optimizer.param_groups[0]['lr'] == 3e-4
@@ -467,6 +475,7 @@ def test_mini_training_loop():
     assert 'reach_loss' in loss_dict
     assert 'mean_bound_loss' in loss_dict
     assert 'raw_mean_bound_loss' in loss_dict
+    assert 'reach_value_bound_loss' in loss_dict
     assert all(np.isfinite(v) for v in loss_dict.values())
     print(f"  Losses: actor={loss_dict['actor_loss']:.4f}, "
           f"energy={loss_dict['energy_loss']:.4f}, "

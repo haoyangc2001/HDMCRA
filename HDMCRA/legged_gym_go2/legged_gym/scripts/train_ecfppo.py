@@ -346,6 +346,8 @@ def train_ecfppo(args) -> None:
         max_grad_norm=train_cfg.algorithm.max_grad_norm,
         max_grad_norm_energy=max_grad_norm_energy,
         reach_value_clip=getattr(train_cfg.algorithm, 'reach_value_clip', None),
+        reach_value_bound=getattr(train_cfg.algorithm, 'reach_value_bound', None),
+        reach_value_bound_coef=getattr(train_cfg.algorithm, 'reach_value_bound_coef', 0.0),
         anneal_entropy=train_cfg.algorithm.anneal_entropy,
         device=str(device),
     )
@@ -513,6 +515,7 @@ def train_ecfppo(args) -> None:
                 f"actor_loss {loss_dict['actor_loss']:.5f} | "
                 f"energy_loss {loss_dict['energy_loss']:.5f} | "
                 f"reach_loss {loss_dict['reach_loss']:.5f} | "
+                f"reach_value_bound_loss {loss_dict.get('reach_value_bound_loss', 0.0):.5f} | "
                 f"mean_bound_loss {loss_dict.get('mean_bound_loss', 0.0):.5f} | "
                 f"raw_mean_bound_loss {loss_dict.get('raw_mean_bound_loss', 0.0):.5f} | "
                 f"entropy {loss_dict['entropy_loss']:.4f} | "

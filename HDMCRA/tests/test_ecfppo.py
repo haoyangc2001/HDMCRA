@@ -470,8 +470,10 @@ def test_ecefppo_update():
     assert 'entropy_loss' in loss_dict
     assert 'mean_bound_loss' in loss_dict
     assert 'raw_mean_bound_loss' in loss_dict
+    assert 'reach_value_bound_loss' in loss_dict
     assert loss_dict['mean_bound_loss'] >= 0.0
     assert loss_dict['raw_mean_bound_loss'] >= 0.0
+    assert loss_dict['reach_value_bound_loss'] >= 0.0
     assert all(np.isfinite(v) for v in loss_dict.values())
     print(f"  Losses: actor={loss_dict['actor_loss']:.4f}, "
           f"energy={loss_dict['energy_loss']:.4f}, "
@@ -499,6 +501,27 @@ def test_actor_raw_mean_bound_loss():
     assert alg.actor_raw_mean_bound == 2.0
     assert alg.actor_raw_mean_bound_coef == 1e-3
     print("[PASS] test_actor_raw_mean_bound_loss")
+
+
+def test_reach_value_bound_loss():
+    """D014: reach critic 输出边界正则只惩罚越过语义边界的预测。"""
+    model = EC_EFPPO_ActorCritic(
+        num_actor_obs=4, num_critic_obs=4, num_actions=3,
+        hidden_dim=8, num_hidden_layers=2,
+    )
+    alg = EC_EFPPO(
+        actor_critic=model, reach_value_bound=5000.0,
+        reach_value_bound_coef=1e-4, device='cpu',
+    )
+
+    inside = torch.tensor([-5000.0, 0.0, 4999.0])
+    outside = torch.tensor([-6000.0, 7500.0, 100.0])
+
+    assert alg._reach_value_bound_loss(inside).item() == 0.0
+    assert alg._reach_value_bound_loss(outside).item() > 0.0
+    assert alg.reach_value_bound == 5000.0
+    assert alg.reach_value_bound_coef == 1e-4
+    print("[PASS] test_reach_value_bound_loss")
 
 
 def test_actor_mean_bound_loss():
@@ -690,6 +713,7 @@ if __name__ == '__main__':
         test_ecefppo_act,
         test_ecefppo_update,
         test_actor_raw_mean_bound_loss,
+        test_reach_value_bound_loss,
         test_actor_mean_bound_loss,
         test_policy_gae_direction_for_cost_like_advantages,
         test_independent_gradient_flow,
