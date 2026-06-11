@@ -425,6 +425,7 @@ def train_ecfppo(args) -> None:
             iteration,
             total_updates,
             anneal=train_cfg.algorithm.anneal_entropy,
+            entropy_coef_floor=getattr(train_cfg.algorithm, 'entropy_coef_floor', 0.0),
         )
 
         # ---- Rollout ----

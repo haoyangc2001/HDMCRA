@@ -253,11 +253,13 @@ class GO2EC_EFPPOCfgPPO(GO2HighLevelCfgPPO):
         vf_coef = 1.0
         # 初始动作噪声标准差。EC-EFPPO 使用 log_std 参数化，这里仍以 std 语义配置。
         init_noise_std = 0.5
-        # log_std 限幅范围；[-2, log(0.5)] 对应 std 约 [0.135, 0.5]
-        log_std_min = -2.0
+        # D015: 提高 std 下限，避免中后期探索塌缩到几乎确定性策略。
+        # [-1.4, log(0.5)] 对应 std 约 [0.247, 0.5]
+        log_std_min = -1.4
         log_std_max = -0.6931471805599453
-        # Entropy coefficient。降低并退火，避免持续推大探索噪声。
+        # Entropy coefficient。保留退火，但给一个小下限避免后期完全关闭探索。
         entropy_coef = 0.001
+        entropy_coef_floor = 1e-4
         # D011: 将 actor mean 映射到 [-1, 1]，降低 raw policy 与环境裁剪执行的错配。
         bounded_actor_mean = True
         # D013: 加强 tanh 前 raw mean 正则，避免 bounded mean 长期卡在饱和边界。

@@ -23,7 +23,7 @@ HDMCRA 已经完成 EC-EFPPO 的主体工程实现。当前工作重点是 **训
 
 ## 当前最新诊断焦点
 
-截至 2026-06-11，当前诊断主线是 D014：D013 的 `actor_raw_mean_bound_coef=1e-2`（actor 原始均值越界惩罚系数）明显降低了 `act_mean_clip_ratio`（动作均值贴边比例），但最新训练 `20260610-212458` 仍显示后期 `reach_clip_ratio`（reach critic 裁剪比例）和 `reach_loss`（到达价值损失）偏高，`no_reach`（未到达）重新主导失败。
+截至 2026-06-11，当前诊断主线是 D015：D014 的 `reach_value_bound_loss`（到达价值边界损失）能参与训练并短暂提高峰值，但最新训练 `20260611-080534` 最终仍退化为 `no_reach=0.972`（未到达比例），且 `std_mean=0.1499`（动作标准差均值）、`entropy=-1.4568`（熵）显示后期探索塌缩。
 
 已经确认的事实：
 
@@ -35,8 +35,10 @@ HDMCRA 已经完成 EC-EFPPO 的主体工程实现。当前工作重点是 **训
 - D012 增加 raw mean（actor 原始均值）诊断和正则：`EC_EFPPO_ActorCritic` 保存 `raw_action_mean`（actor 原始动作均值），buffer/debug 记录 raw mean 统计，policy loss（策略损失）新增 `actor_raw_mean_bound`（actor 原始均值边界）正则。`20260610-174615` 证明该方向有效，峰值 `success=0.356`（成功率）、`reach_rate=0.700`（到达率），但后期 `raw_mean_clip_ratio`（原始均值越界比例）仍在 0.65-0.94 区间，最终 `no_reach=0.969`（未到达比例）。
 - D013 将 Go2 默认 `actor_raw_mean_bound_coef`（actor 原始均值越界惩罚系数）从 `1e-3` 提高到 `1e-2`，保持 `actor_raw_mean_bound=2.0`（actor 原始均值边界）不变。`20260610-212458` 证明动作均值贴边明显缓解，iter 500 `act_mean_clip_ratio=0.234`（动作均值贴边比例），但峰值 `success=0.281`（成功率）低于 D012 的 `0.356`，后期 `no_reach=0.912`（未到达比例）。
 - D014 新增 reach critic（到达价值网络）输出边界正则：`reach_value_bound=5000.0`（到达价值输出边界）、`reach_value_bound_coef=1e-4`（到达价值越界惩罚系数），目标是给越过 `reach_value_clip`（到达价值裁剪）语义边界的 `values_reach`（到达价值预测）提供直接梯度。
+- D014 后 `20260611-080534` 峰值 `success=0.314`（成功率）略高于 D013，但最终 `success=0.028`、`no_reach=0.972`（未到达比例），且中后期 `act_mean_clip_ratio/raw_mean_clip_ratio`（动作均值贴边比例/原始均值越界比例）回退，说明不应继续单纯加大 `reach_value_bound_coef`（到达价值越界惩罚系数）。
+- D015 提高探索下限：`log_std_min=-1.4`（动作标准差下界，约 `std_min=0.247`），新增 `entropy_coef_floor=1e-4`（熵系数下限），用于验证后期 `std_mean/entropy`（动作标准差均值/熵）不再塌缩时，`no_reach`（未到达）是否下降。
 
-当前下一步：先运行相关测试，再用 D014 配置从头跑 200-300 iter。验证重点是 `reach_clip_ratio`（reach critic 裁剪比例）和 `reach_loss`（到达价值损失）是否下降，`values_reach`（到达价值预测）是否不再长期到 `-2e4/-4e4` 量级，同时确认 `act_mean_clip_ratio/raw_mean_clip_ratio`（动作均值贴边比例/原始均值越界比例）没有回退。
+当前下一步：先运行相关测试，再用 D015 配置从头跑 500 iter。验证重点是 `std_mean`（动作标准差均值）是否不再掉到 0.15 附近，`entropy`（熵）是否不再完全塌缩，`no_reach`（未到达比例）是否低于 D014 最终 0.972，同时确认 `act_mean_clip_ratio/raw_mean_clip_ratio`（动作均值贴边比例/原始均值越界比例）没有因为维持探索而明显恶化。
 
 如果接手时已经有新日志，优先判断：
 
@@ -74,11 +76,12 @@ HDMCRA 已经完成 EC-EFPPO 的主体工程实现。当前工作重点是 **训
 - 当前实现是基于 JAX EC-EFPPO 参考实现、面向 Go2 任务的 PyTorch 适配版，不是逐行等价且已完成交叉验证的复刻版。
 - 当前 Go2 EC-EFPPO 默认网络是 `4x512 + elu`，不是早期设计中的 `2x256 + tanh`。
 - 当前 `gamma_energy` 是 `0.99`，不是原始默认值 `1.0`。
-- 当前 `log_std_max=-0.6931471805599453`，对应最大 `std≈0.5`。
+- 当前 `log_std_min=-1.4`、`log_std_max=-0.6931471805599453`，对应 `std≈[0.247, 0.5]`。
 - 当前 `actor_mean_bound=1.0`、`actor_mean_bound_coef=1e-2`，用于惩罚 actor mean 超出动作边界。
 - 当前三路学习率为 `policy_learning_rate=1e-4`、`energy_learning_rate=1e-3`、`reach_learning_rate=3e-4`。
 - 当前 `reach_value_clip=5000.0`，用于限制 reach bootstrap value（到达引导值）的语义范围。
 - 当前 `reach_value_bound=5000.0`、`reach_value_bound_coef=1e-4`，用于约束 reach critic（到达价值网络）输出本身不要长期越过语义边界。
+- 当前 `entropy_coef=0.001`、`entropy_coef_floor=1e-4`，用于让 entropy（熵）退火后仍保留小幅探索。
 - 当前 `debug_stats_interval=10`，训练日志每 10 iter 输出分组 debug 字段。
 - P0/P1 修复前的 success rate 和 energy consumption 统计只能作为历史调试参考。
 - 新的训练结论必须基于修复后的代码和最新训练日志。

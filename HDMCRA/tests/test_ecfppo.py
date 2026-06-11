@@ -657,6 +657,11 @@ def test_entropy_annealing():
     coef = EC_EFPPO.compute_entropy_coef(0.01, 100, 100, anneal=True)
     assert abs(coef) < 1e-6, f"最终 entropy: {coef}"
 
+    coef = EC_EFPPO.compute_entropy_coef(
+        0.01, 100, 100, anneal=True, entropy_coef_floor=0.001
+    )
+    assert abs(coef - 0.001) < 1e-6, f"带下限 entropy: {coef}"
+
     coef = EC_EFPPO.compute_entropy_coef(0.01, 50, 100, anneal=False)
     assert abs(coef - 0.01) < 1e-6, f"关闭退火: {coef}"
     print("[PASS] test_entropy_annealing")

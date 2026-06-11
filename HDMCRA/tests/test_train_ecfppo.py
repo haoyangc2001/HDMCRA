@@ -29,9 +29,10 @@ def test_config_class():
     assert cfg.algorithm.clip_eps == 0.2
     assert cfg.algorithm.vf_coef == 1.0
     assert cfg.algorithm.init_noise_std == 0.5
-    assert cfg.algorithm.log_std_min == -2.0
+    assert cfg.algorithm.log_std_min == -1.4
     assert abs(cfg.algorithm.log_std_max - (-0.6931471805599453)) < 1e-12
     assert cfg.algorithm.entropy_coef == 0.001
+    assert cfg.algorithm.entropy_coef_floor == 1e-4
     assert cfg.algorithm.bounded_actor_mean is True
     assert cfg.algorithm.actor_raw_mean_bound == 2.0
     assert cfg.algorithm.actor_raw_mean_bound_coef == 1e-2
@@ -121,6 +122,7 @@ def test_alg_with_config():
     assert alg.gamma_reach_init == 0.999
     assert alg.clip_param == 0.2
     assert alg.value_loss_coef == 1.0
+    assert cfg.algorithm.entropy_coef_floor == 1e-4
     assert alg.policy_learning_rate == 1e-4
     assert alg.energy_learning_rate == 1e-3
     assert alg.reach_learning_rate == 3e-4
@@ -398,6 +400,9 @@ def test_resume_schedule_total_updates_preserves_annealed_state():
     # horizon is exhausted, entropy must stay off instead of becoming negative.
     assert EC_EFPPO.compute_entropy_coef(0.001, 200, 200, anneal=True) == 0.0
     assert EC_EFPPO.compute_entropy_coef(0.001, 250, 200, anneal=True) == 0.0
+    assert EC_EFPPO.compute_entropy_coef(
+        0.001, 250, 200, anneal=True, entropy_coef_floor=1e-4
+    ) == 1e-4
     assert EC_EFPPO.compute_entropy_coef(0.001, 0, 200, anneal=False) == 0.001
     print("[PASS] test_resume_schedule_total_updates_preserves_annealed_state")
 

@@ -783,18 +783,20 @@ class EC_EFPPO:
         current_update: int,
         total_updates: int,
         anneal: bool = True,
+        entropy_coef_floor: float = 0.0,
     ) -> float:
         """
-        Entropy 退火：从 entropy_coef_init 线性衰减到 0。
+        Entropy 退火：从 entropy_coef_init 线性衰减到下限。
 
         对应 JAX 版：
         ent = ent_coef * (total_timesteps - timestep) / total_timesteps
         """
+        entropy_coef_floor = max(float(entropy_coef_floor), 0.0)
         if not anneal:
-            return entropy_coef_init
+            return max(float(entropy_coef_init), entropy_coef_floor)
         total_updates = max(int(total_updates), 1)
         progress_remaining = max(total_updates - current_update, 0) / total_updates
-        return entropy_coef_init * progress_remaining
+        return max(float(entropy_coef_init) * progress_remaining, entropy_coef_floor)
 
     def get_energy_target_rms_state(self) -> dict:
         """获取 energy_target_rms 状态（用于保存 checkpoint）。"""
