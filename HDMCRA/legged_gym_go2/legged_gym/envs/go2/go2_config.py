@@ -260,8 +260,10 @@ class GO2EC_EFPPOCfgPPO(GO2HighLevelCfgPPO):
         # Entropy coefficient。保留退火，但给一个小下限避免后期完全关闭探索。
         entropy_coef = 0.001
         entropy_coef_floor = 1e-4
-        # D011: 将 actor mean 映射到 [-1, 1]，降低 raw policy 与环境裁剪执行的错配。
-        bounded_actor_mean = True
+        # D016: 使用 Beta 有界动作分布，避免 Gaussian + tanh(mean) 与执行裁剪错配。
+        action_distribution = 'beta'
+        # Beta policy 天然输出 [-1, 1] 动作，bounded_actor_mean 仅对 Gaussian 分支生效。
+        bounded_actor_mean = False
         # D013: 加强 tanh 前 raw mean 正则，避免 bounded mean 长期卡在饱和边界。
         actor_raw_mean_bound = 2.0
         actor_raw_mean_bound_coef = 1e-2

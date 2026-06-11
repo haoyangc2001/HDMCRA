@@ -75,6 +75,8 @@ class EC_EFPPO_Buffer:
         # D005 诊断：记录 actor 分布均值，用于区分动作贴边来自均值还是采样噪声。
         self.action_mean = torch.zeros(horizon, num_envs, act_dim, device=device)
         self.raw_action_mean = torch.zeros(horizon, num_envs, act_dim, device=device)
+        self.action_dist_alpha = torch.zeros(horizon, num_envs, act_dim, device=device)
+        self.action_dist_beta = torch.zeros(horizon, num_envs, act_dim, device=device)
         self.raw_action_mean_bound = 2.0
         self.log_probs = torch.zeros(horizon, num_envs, device=device)
 
@@ -162,6 +164,8 @@ class EC_EFPPO_Buffer:
         next_h: torch.Tensor,
         action_mean: torch.Tensor = None,
         raw_action_mean: torch.Tensor = None,
+        action_dist_alpha: torch.Tensor = None,
+        action_dist_beta: torch.Tensor = None,
     ) -> None:
         """
         存储单步 transition 数据。
@@ -189,6 +193,10 @@ class EC_EFPPO_Buffer:
         self.actions[idx] = actions
         self.action_mean[idx] = actions if action_mean is None else action_mean
         self.raw_action_mean[idx] = self.action_mean[idx] if raw_action_mean is None else raw_action_mean
+        if action_dist_alpha is not None:
+            self.action_dist_alpha[idx] = action_dist_alpha
+        if action_dist_beta is not None:
+            self.action_dist_beta[idx] = action_dist_beta
         self.log_probs[idx] = log_probs
         self.values[idx] = values
         self.value_reach[idx] = value_reach
@@ -399,6 +407,19 @@ class EC_EFPPO_Buffer:
         self.debug_stats["action_mean_clip_ratio"] = action_mean_clip_mask.float().mean().item()
         self.debug_stats["raw_action_mean_clip_ratio"] = raw_action_mean_clip_mask.float().mean().item()
 
+        beta_mask = (self.action_dist_alpha > 0) & (self.action_dist_beta > 0)
+        self.debug_stats["beta_policy_ratio"] = beta_mask.float().mean().item()
+        if beta_mask.any():
+            alpha = self.action_dist_alpha[beta_mask]
+            beta = self.action_dist_beta[beta_mask]
+            self.debug_stats["beta_alpha_mean"] = alpha.mean().item()
+            self.debug_stats["beta_beta_mean"] = beta.mean().item()
+            self.debug_stats["beta_concentration_mean"] = (alpha + beta).mean().item()
+        else:
+            self.debug_stats["beta_alpha_mean"] = float("nan")
+            self.debug_stats["beta_beta_mean"] = float("nan")
+            self.debug_stats["beta_concentration_mean"] = float("nan")
+
     def _flat_view(self) -> EC_EFPPO_Batch:
         """将 [T, N, ...] 数据展平为 [T*N, ...]。"""
         obs = self.observations[:-1].reshape(-1, self.observations.size(-1))
@@ -521,8 +542,10 @@ class EC_EFPPO:
         self.anneal_entropy = anneal_entropy
 
         # 三个独立优化器（对应 JAX 版三个独立 TrainState）
-        # policy optimizer 必须同时管理 actor MLP 和动作分布 log_std；否则 entropy/std 不会更新。
-        self.policy_params = list(self.actor_critic.actor.parameters()) + [self.actor_critic.log_std]
+        # Gaussian policy 必须同时管理 actor MLP 和动作分布 log_std；Beta policy 没有独立 log_std。
+        self.policy_params = list(self.actor_critic.actor.parameters())
+        if getattr(self.actor_critic, "action_distribution", "gaussian") == "gaussian":
+            self.policy_params += [self.actor_critic.log_std]
         self.policy_optimizer = optim.Adam(
             self.policy_params, lr=self.policy_learning_rate
         )

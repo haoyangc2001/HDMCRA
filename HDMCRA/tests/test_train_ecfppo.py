@@ -33,7 +33,8 @@ def test_config_class():
     assert abs(cfg.algorithm.log_std_max - (-0.6931471805599453)) < 1e-12
     assert cfg.algorithm.entropy_coef == 0.001
     assert cfg.algorithm.entropy_coef_floor == 1e-4
-    assert cfg.algorithm.bounded_actor_mean is True
+    assert cfg.algorithm.action_distribution == 'beta'
+    assert cfg.algorithm.bounded_actor_mean is False
     assert cfg.algorithm.actor_raw_mean_bound == 2.0
     assert cfg.algorithm.actor_raw_mean_bound_coef == 1e-2
     assert cfg.algorithm.actor_mean_bound == 1.0
@@ -91,6 +92,7 @@ def test_alg_with_config():
     model = EC_EFPPO_ActorCritic(
         num_actor_obs=48, num_critic_obs=48, num_actions=12,
         hidden_dim=64, num_hidden_layers=2,
+        action_distribution=cfg.algorithm.action_distribution,
     )
     alg = EC_EFPPO(
         actor_critic=model,
@@ -123,6 +125,8 @@ def test_alg_with_config():
     assert alg.clip_param == 0.2
     assert alg.value_loss_coef == 1.0
     assert cfg.algorithm.entropy_coef_floor == 1e-4
+    assert model.action_distribution == 'beta'
+    assert id(model.log_std) not in {id(p) for p in alg.policy_optimizer.param_groups[0]['params']}
     assert alg.policy_learning_rate == 1e-4
     assert alg.energy_learning_rate == 1e-3
     assert alg.reach_learning_rate == 3e-4

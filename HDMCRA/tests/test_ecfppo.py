@@ -375,6 +375,25 @@ def test_ecefppo_instantiation():
     print("[PASS] test_ecefppo_instantiation")
 
 
+def test_beta_policy_optimizer_excludes_log_std():
+    """D016: Beta policy 没有独立 log_std，policy optimizer 不应管理无效 std 参数。"""
+    model = EC_EFPPO_ActorCritic(
+        num_actor_obs=8,
+        num_critic_obs=8,
+        num_actions=3,
+        hidden_dim=16,
+        num_hidden_layers=1,
+        action_distribution='beta',
+    )
+    alg = EC_EFPPO(actor_critic=model, device='cpu')
+    policy_params = set(id(p) for p in alg.policy_optimizer.param_groups[0]['params'])
+    actor_params = set(id(p) for p in model.actor.parameters())
+    assert model.action_distribution == 'beta'
+    assert id(model.log_std) not in policy_params
+    assert actor_params.issubset(policy_params)
+    print("[PASS] test_beta_policy_optimizer_excludes_log_std")
+
+
 def test_policy_optimizer_updates_std():
     """P0: entropy/std 诊断要求 std 必须由 policy optimizer 实际更新。"""
     model, _, _ = make_model_and_buffer(num_envs=4, horizon=4, obs_dim=8, act_dim=3)
@@ -714,6 +733,7 @@ if __name__ == '__main__':
         test_reach_bootstrap_value_clip_bounds_targets,
         test_iter_batches,
         test_ecefppo_instantiation,
+        test_beta_policy_optimizer_excludes_log_std,
         test_policy_optimizer_updates_std,
         test_ecefppo_act,
         test_ecefppo_update,

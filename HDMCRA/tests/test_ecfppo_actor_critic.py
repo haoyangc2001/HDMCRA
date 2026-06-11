@@ -253,7 +253,40 @@ def test_independent_gradients():
     print("[PASS] test_independent_gradients")
 
 
-# ---- Test 11: 不同 num_actor_obs / num_critic_obs ----
+# ---- Test 11: Beta policy 有界动作分布 ----
+def test_beta_action_distribution():
+    model = EC_EFPPO_ActorCritic(
+        num_actor_obs=4,
+        num_critic_obs=4,
+        num_actions=3,
+        hidden_dim=8,
+        num_hidden_layers=1,
+        action_distribution='beta',
+    )
+    obs = torch.randn(16, 4)
+    action, log_prob, energy_val, reach_val = model.act(obs)
+
+    assert model.actor[-1].out_features == 6
+    assert action.shape == (16, 3)
+    assert torch.all(action <= 1.0)
+    assert torch.all(action >= -1.0)
+    assert torch.isfinite(log_prob).all()
+    assert torch.allclose(log_prob, model.get_actions_log_prob(action))
+    assert torch.all(model.action_mean <= 1.0)
+    assert torch.all(model.action_mean >= -1.0)
+    assert torch.all(model.action_std > 0.0)
+    assert torch.all(model.action_dist_alpha > 1.0)
+    assert torch.all(model.action_dist_beta > 1.0)
+    assert torch.isfinite(model.entropy).all()
+    assert torch.allclose(model.action_raw_mean, model.action_mean)
+
+    inference_action = model.act_inference(obs)
+    assert torch.all(inference_action <= 1.0)
+    assert torch.all(inference_action >= -1.0)
+    print("[PASS] test_beta_action_distribution")
+
+
+# ---- Test 12: 不同 num_actor_obs / num_critic_obs ----
 def test_different_obs_dims():
     model = EC_EFPPO_ActorCritic(
         num_actor_obs=48,
@@ -293,6 +326,7 @@ if __name__ == '__main__':
         test_load_old_std_checkpoint,
         test_bounded_actor_mean,
         test_independent_gradients,
+        test_beta_action_distribution,
         test_different_obs_dims,
         test_import_from_package,
     ]

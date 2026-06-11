@@ -318,6 +318,7 @@ def train_ecfppo(args) -> None:
         log_std_min=getattr(train_cfg.algorithm, 'log_std_min', -5.0),
         log_std_max=getattr(train_cfg.algorithm, 'log_std_max', 2.0),
         bounded_actor_mean=getattr(train_cfg.algorithm, 'bounded_actor_mean', False),
+        action_distribution=getattr(train_cfg.algorithm, 'action_distribution', 'gaussian'),
     )
 
     # ---- 初始化 EC_EFPPO ----
@@ -433,6 +434,12 @@ def train_ecfppo(args) -> None:
             actions, log_probs, values_energy, values_reach = alg.act(obs)
             action_mean = actor_critic.action_mean.detach()
             raw_action_mean = actor_critic.action_raw_mean.detach()
+            action_dist_alpha = actor_critic.action_dist_alpha
+            action_dist_beta = actor_critic.action_dist_beta
+            if action_dist_alpha is not None:
+                action_dist_alpha = action_dist_alpha.detach()
+            if action_dist_beta is not None:
+                action_dist_beta = action_dist_beta.detach()
 
             next_obs, next_g, next_h, dones, infos, next_energy, energy_consumption = env.step(actions)
 
@@ -461,6 +468,8 @@ def train_ecfppo(args) -> None:
                 next_h=next_h,
                 action_mean=action_mean,
                 raw_action_mean=raw_action_mean,
+                action_dist_alpha=action_dist_alpha,
+                action_dist_beta=action_dist_beta,
             )
 
             obs = next_obs
@@ -529,7 +538,11 @@ def train_ecfppo(args) -> None:
 
             debug_interval = getattr(train_cfg.runner, 'debug_stats_interval', 0)
             if debug_interval and (iteration + 1) % debug_interval == 0 and debug_stats:
-                std = actor_critic.std.detach().float()
+                if getattr(actor_critic, 'action_distribution', 'gaussian') == 'beta':
+                    # Beta policy has no global Gaussian std; use beta_* fields below instead.
+                    std = torch.full((1,), float('nan'), device=device)
+                else:
+                    std = actor_critic.std.detach().float()
                 act_mean_abs_dim = _format_debug_dim_values(
                     debug_stats, "action_mean_abs_mean", action_shape[0]
                 )
@@ -548,6 +561,9 @@ def train_ecfppo(args) -> None:
                 debug_line = (
                     f"debug {iteration + 1:05d} | "
                     f"std_mean {std.mean().item():.4f} | std_min {std.min().item():.4f} | std_max {std.max().item():.4f} | "
+                    f"beta_alpha_mean {debug_stats.get('beta_alpha_mean', float('nan')):.4f} | "
+                    f"beta_beta_mean {debug_stats.get('beta_beta_mean', float('nan')):.4f} | "
+                    f"beta_concentration_mean {debug_stats.get('beta_concentration_mean', float('nan')):.4f} | "
                     f"done_mean {debug_stats.get('done_for_gae_mean', float('nan')):.4f} | "
                     f"energy_min_ratio {debug_stats.get('energy_min_ratio', float('nan')):.4f} | "
                     f"energy_neg_ratio {debug_stats.get('energy_negative_ratio', float('nan')):.4f} | "

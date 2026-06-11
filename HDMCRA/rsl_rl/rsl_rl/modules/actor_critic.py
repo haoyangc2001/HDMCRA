@@ -32,7 +32,7 @@ import numpy as np
 
 import torch
 import torch.nn as nn
-from torch.distributions import Normal
+from torch.distributions import Beta, Normal
 from torch.nn.modules import rnn
 
 class ActorCritic(nn.Module):
@@ -160,11 +160,10 @@ class EC_EFPPO_ActorCritic(nn.Module):
     EC-EFPPO 三网络架构：Policy + Energy Value + Reach Value。
 
     移植自 Go2HierarchicalMiniCostReachAvoid/model/actorcritic.py 中的
-    Policy_Network 和 Value_Network，使用 2层×256 MLP + tanh 结构，
-    与 JAX 参考实现对齐以便交叉验证。
+    Policy_Network 和 Value_Network，并按 Go2 训练配置扩展网络宽度/深度。
 
     三个子网络完全独立（不共享参数）：
-    - self.actor: 策略网络，输出高斯分布的均值
+    - self.actor: 策略网络，支持 Gaussian 或 Beta 有界动作分布
     - self.energy_critic: 能量价值网络，输出标量 V(s)
     - self.reach_critic: reach 价值网络，输出标量 h(s)
     """
@@ -173,7 +172,8 @@ class EC_EFPPO_ActorCritic(nn.Module):
                  hidden_dim=256, num_hidden_layers=2,
                  init_noise_std=1.0, activation='elu',
                  log_std_min=-5.0, log_std_max=2.0,
-                 bounded_actor_mean=False, **kwargs):
+                 bounded_actor_mean=False,
+                 action_distribution='gaussian', **kwargs):
         if kwargs:
             print("EC_EFPPO_ActorCritic.__init__ got unexpected arguments, "
                   "which will be ignored: " + str([key for key in kwargs.keys()]))
@@ -184,6 +184,12 @@ class EC_EFPPO_ActorCritic(nn.Module):
         # activation is now an nn.Module class (not instance) — call activation() to instantiate
         activation_cls = activation if isinstance(activation, type) else type(activation)
 
+        self.num_actions = int(num_actions)
+        self.action_distribution = str(action_distribution).lower()
+        if self.action_distribution not in ("gaussian", "beta"):
+            raise ValueError(f"Unsupported action_distribution: {action_distribution}")
+        actor_output_dim = self.num_actions if self.action_distribution == "gaussian" else 2 * self.num_actions
+
         # ---- Policy Network (actor) ----
         actor_layers = []
         actor_layers.append(nn.Linear(num_actor_obs, hidden_dim))
@@ -191,7 +197,7 @@ class EC_EFPPO_ActorCritic(nn.Module):
         for _ in range(num_hidden_layers - 1):
             actor_layers.append(nn.Linear(hidden_dim, hidden_dim))
             actor_layers.append(activation_cls())
-        actor_layers.append(nn.Linear(hidden_dim, num_actions))
+        actor_layers.append(nn.Linear(hidden_dim, actor_output_dim))
         self.actor = nn.Sequential(*actor_layers)
 
         # ---- Energy Value Network (energy_critic) ----
@@ -225,7 +231,11 @@ class EC_EFPPO_ActorCritic(nn.Module):
         self.log_std = nn.Parameter(init_log_std)
         self.distribution = None
         self.raw_action_mean = None
-        Normal.set_default_validate_args = False
+        self.beta_alpha = None
+        self.beta_beta = None
+        self._beta_log_range_scale = float(np.log(2.0))
+        Normal.set_default_validate_args(False)
+        Beta.set_default_validate_args(False)
 
         # ---- Weight initialization (aligned with JAX version) ----
         self._init_weights()
@@ -233,6 +243,7 @@ class EC_EFPPO_ActorCritic(nn.Module):
         print(f"EC_EFPPO Actor: {self.actor}")
         print(f"EC_EFPPO Energy Critic: {self.energy_critic}")
         print(f"EC_EFPPO Reach Critic: {self.reach_critic}")
+        print(f"EC_EFPPO action distribution: {self.action_distribution}")
         print(f"EC_EFPPO bounded actor mean: {self.bounded_actor_mean}")
 
     def _init_weights(self):
@@ -293,13 +304,38 @@ class EC_EFPPO_ActorCritic(nn.Module):
         return raw_mean
 
     def update_distribution(self, observations):
-        raw_mean = self.actor(observations)
-        self.raw_action_mean = raw_mean
-        mean = self._bound_action_mean(raw_mean)
-        self.distribution = Normal(mean, mean * 0. + self.std)
+        actor_output = self.actor(observations)
+        if self.action_distribution == "beta":
+            alpha_raw, beta_raw = actor_output.split(self.num_actions, dim=-1)
+            self.beta_alpha = torch.nn.functional.softplus(alpha_raw) + 1.0
+            self.beta_beta = torch.nn.functional.softplus(beta_raw) + 1.0
+            self.distribution = Beta(self.beta_alpha, self.beta_beta)
+            # Beta policy has no tanh logits. Store bounded mean as raw_action_mean so
+            # Gaussian-specific raw mean regularization stays inactive on this branch.
+            self.raw_action_mean = self.action_mean
+        else:
+            self.beta_alpha = None
+            self.beta_beta = None
+            raw_mean = actor_output
+            self.raw_action_mean = raw_mean
+            mean = self._bound_action_mean(raw_mean)
+            self.distribution = Normal(mean, mean * 0. + self.std)
+
+    def _scale_beta_sample(self, sample):
+        return sample * 2.0 - 1.0
+
+    def _unscale_beta_action(self, action):
+        return ((action + 1.0) * 0.5).clamp(1e-6, 1.0 - 1e-6)
+
+    def _beta_log_prob(self, actions):
+        unscaled = self._unscale_beta_action(actions)
+        return (self.distribution.log_prob(unscaled) - self._beta_log_range_scale).sum(dim=-1)
 
     @property
     def action_mean(self):
+        if self.action_distribution == "beta":
+            mean01 = self.beta_alpha / (self.beta_alpha + self.beta_beta)
+            return self._scale_beta_sample(mean01)
         return self.distribution.mean
 
     @property
@@ -308,11 +344,23 @@ class EC_EFPPO_ActorCritic(nn.Module):
 
     @property
     def action_std(self):
+        if self.action_distribution == "beta":
+            return self.distribution.stddev * 2.0
         return self.distribution.stddev
 
     @property
     def entropy(self):
+        if self.action_distribution == "beta":
+            return (self.distribution.entropy() + self._beta_log_range_scale).sum(dim=-1)
         return self.distribution.entropy().sum(dim=-1)
+
+    @property
+    def action_dist_alpha(self):
+        return self.beta_alpha
+
+    @property
+    def action_dist_beta(self):
+        return self.beta_beta
 
     # ---- Core methods ----
 
@@ -335,8 +383,12 @@ class EC_EFPPO_ActorCritic(nn.Module):
             critic_observations = observations
 
         self.update_distribution(observations)
-        action = self.distribution.sample()
-        log_prob = self.distribution.log_prob(action).sum(dim=-1)
+        if self.action_distribution == "beta":
+            action = self._scale_beta_sample(self.distribution.sample())
+            log_prob = self._beta_log_prob(action)
+        else:
+            action = self.distribution.sample()
+            log_prob = self.distribution.log_prob(action).sum(dim=-1)
 
         energy_value = self.energy_critic(critic_observations).squeeze(-1)
         reach_value = self.reach_critic(critic_observations).squeeze(-1)
@@ -345,6 +397,8 @@ class EC_EFPPO_ActorCritic(nn.Module):
 
     def get_actions_log_prob(self, actions):
         """给定动作，返回 log 概率。"""
+        if self.action_distribution == "beta":
+            return self._beta_log_prob(actions)
         return self.distribution.log_prob(actions).sum(dim=-1)
 
     def evaluate(self, critic_observations):
@@ -372,4 +426,10 @@ class EC_EFPPO_ActorCritic(nn.Module):
         Returns:
             actions_mean: [N, num_actions]
         """
-        return self._bound_action_mean(self.actor(observations))
+        actor_output = self.actor(observations)
+        if self.action_distribution == "beta":
+            alpha_raw, beta_raw = actor_output.split(self.num_actions, dim=-1)
+            alpha = torch.nn.functional.softplus(alpha_raw) + 1.0
+            beta = torch.nn.functional.softplus(beta_raw) + 1.0
+            return self._scale_beta_sample(alpha / (alpha + beta))
+        return self._bound_action_mean(actor_output)

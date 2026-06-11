@@ -12,13 +12,13 @@
 ## 新手接手摘要
 
 - 当前项目不是“实现未完成”，而是“实现已完成但训练稳定性尚未验证通过”。接手后不要先大改结构，也不要直接长训 1500 iter。
-- 训练稳定性诊断已经从 D001 推进到 D015：先后处理了 `std`（动作标准差）未优化、`std` 无界增长、reach bootstrap target（到达引导目标）发散、能耗尺度过大、动作饱和、reach critic（到达价值网络）更新过强、actor mean（actor 动作均值）越界、policy advantage（策略优势）符号方向、安全失败分组诊断、resume schedule（续训退火计划）语义、bounded actor mean（有界 actor 均值）、raw mean（actor 原始均值）饱和、raw mean 正则强度不足、reach critic 输出越界，以及后期探索塌缩。
-- 当前默认关键配置：`log_std_min=-1.4`（动作标准差下界，约 `std_min=0.247`）、`log_std_max=log(0.5)`（动作标准差上界）、`entropy_coef=0.001`（初始熵系数）、`entropy_coef_floor=1e-4`（熵系数下限）、`policy_learning_rate=1e-4`（策略学习率）、`energy_learning_rate=1e-3`（能量价值网络学习率）、`reach_learning_rate=3e-4`（到达价值网络学习率）、`reach_value_clip=5000.0`（到达价值裁剪）、`reach_value_bound=5000.0`（到达价值输出边界）、`reach_value_bound_coef=1e-4`（到达价值越界惩罚系数）、`bounded_actor_mean=True`（启用有界 actor 均值）、`actor_raw_mean_bound=2.0`（actor 原始均值边界）、`actor_raw_mean_bound_coef=1e-2`（actor 原始均值越界惩罚系数）、`actor_mean_bound=1.0`（actor 动作均值边界）、`actor_mean_bound_coef=1e-2`（actor 动作均值越界惩罚系数）、`debug_stats_interval=10`（debug 统计间隔）。
+- 训练稳定性诊断已经从 D001 推进到 D016：先后处理了 `std`（动作标准差）未优化、`std` 无界增长、reach bootstrap target（到达引导目标）发散、能耗尺度过大、动作饱和、reach critic（到达价值网络）更新过强、actor mean（actor 动作均值）越界、policy advantage（策略优势）符号方向、安全失败分组诊断、resume schedule（续训退火计划）语义、bounded actor mean（有界 actor 均值）、raw mean（actor 原始均值）饱和、raw mean 正则强度不足、reach critic 输出越界、后期探索塌缩，以及 Gaussian 策略与环境动作边界错配。
+- 当前默认关键配置：`log_std_min=-1.4`（动作标准差下界，约 `std_min=0.247`）、`log_std_max=log(0.5)`（动作标准差上界）、`entropy_coef=0.001`（初始熵系数）、`entropy_coef_floor=1e-4`（熵系数下限）、`policy_learning_rate=1e-4`（策略学习率）、`energy_learning_rate=1e-3`（能量价值网络学习率）、`reach_learning_rate=3e-4`（到达价值网络学习率）、`reach_value_clip=5000.0`（到达价值裁剪）、`reach_value_bound=5000.0`（到达价值输出边界）、`reach_value_bound_coef=1e-4`（到达价值越界惩罚系数）、`action_distribution='beta'`（Beta 有界动作分布）、`bounded_actor_mean=False`（Gaussian 有界均值关闭）、`actor_raw_mean_bound=2.0`（actor 原始均值边界）、`actor_raw_mean_bound_coef=1e-2`（actor 原始均值越界惩罚系数）、`actor_mean_bound=1.0`（actor 动作均值边界）、`actor_mean_bound_coef=1e-2`（actor 动作均值越界惩罚系数）、`debug_stats_interval=10`（debug 统计间隔）。
 - D008 已修正 `advantages_total`（组合优势）在 policy loss 中的符号方向：标准化后取负，使更小的 cost-like reach-avoid 值对应更高动作概率。
 - 最新已完成 4096 env 短训 `20260609-174808` 显示 D008 后 `reach_rate`（到达目标比例）明显恢复，峰值 `success=0.322`、`reach_rate=0.688`；失败瓶颈从纯 `no_reach`（未到达）转向未到达和 `unsafe_before_reach`（到达前不安全）并存。
 - D010 已修复 resume schedule 语义问题；`20260609-233704` 不能作为干净续训结论。
 - D011 采用 `tanh(mean)` 后，干净训练 `20260610-133801` 证明无界越界已被消除，但 bounded mean 迅速贴到 `tanh` 边界，`act_mean_clip_ratio` 后期约 0.99，策略变成有界但饱和的 bang-bang policy。
-- 当前进入 D015：`20260611-080534` 证明 D014 的 `reach_value_bound_loss`（到达价值边界损失）能参与训练，但没有解决后期 `no_reach`（未到达）和 actor saturation（策略饱和）；最终 `std_mean=0.1499`（动作标准差均值）、`entropy=-1.4568`（熵）显示探索继续塌缩。本轮先提高 `log_std_min`（动作标准差下界）并设置 `entropy_coef_floor`（熵系数下限），验证后期探索是否能维持。
+- 当前进入 D016：`20260611-121915` 证明 D015 的 `log_std_min=-1.4`（动作标准差下界）和 `entropy_coef_floor=1e-4`（熵系数下限）能维持更多探索，最终 `std_mean=0.2466`（动作标准差均值）、`entropy=0.0568`（熵）优于 D014；但 `no_reach=0.938`（未到达比例）、`act_mean_clip_ratio=0.4710`（动作均值贴边比例）、`raw_mean_clip_ratio=0.9357`（原始均值越界比例）和 `reach_clip_ratio=0.9628`（reach critic 裁剪比例）仍说明 Gaussian + tanh(mean) 方案没有解决动作边界错配。本轮切到 `Beta`（贝塔）有界动作分布，验证真正有界策略是否降低贴边和后期未到达。
 
 ## 当前待分析问题
 
@@ -38,7 +38,8 @@
 | D012 | resolved | P0 | bounded actor mean 变成 tanh 饱和，策略仍大量贴边且到达能力弱 | `legged_gym_go2/logs/ecfppo_go2/20260610-133801/training.log`、`rsl_rl/rsl_rl/modules/actor_critic.py`、`rsl_rl/rsl_rl/algorithms/ecfppo.py` | 已新增 `raw_action_mean`（actor 原始动作均值）存储、debug 字段和 `actor_raw_mean_bound`（actor 原始均值边界）正则，默认 `bound=2.0`、`coef=1e-3` | `20260610-174615` 峰值 `success=0.356`、`reach_rate=0.700`，证明方向有效；但 raw logits（tanh 前输出）仍大量饱和，转入 D013 提高正则系数 |
 | D013 | resolved | P0 | raw mean 正则方向有效但强度偏弱，后期仍饱和并退化为未到达 | `legged_gym_go2/logs/ecfppo_go2/20260610-174615/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260610-212458/training.log`、`legged_gym_go2/legged_gym/envs/go2/go2_config.py` | 已将 `actor_raw_mean_bound_coef`（actor 原始均值越界惩罚系数）从 `1e-3` 提高到 `1e-2`，保持 `actor_raw_mean_bound=2.0`（actor 原始均值边界） | D013 明显降低 `act_mean_clip_ratio`（动作均值贴边比例），但峰值 `success=0.281` 低于 D012，后期 `no_reach=0.912`；转入 D014 处理 reach critic 输出越界 |
 | D014 | resolved | P0 | reach critic 输出越过 `reach_value_clip` 语义边界，value clipping 只保护 bootstrap 不拉回网络输出 | `legged_gym_go2/logs/ecfppo_go2/20260610-212458/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260611-080534/training.log`、`rsl_rl/rsl_rl/algorithms/ecfppo.py` | 已新增 `reach_value_bound_loss`（到达价值边界损失），默认 `reach_value_bound=5000.0`、`reach_value_bound_coef=1e-4` | D014 峰值 `success=0.314`（成功率）高于 D013，但持续窗口和最终值更差，且 `reach_clip_ratio`（reach critic 裁剪比例）后期仍高；转入 D015 处理探索塌缩 |
-| D015 | open | P0 | 后期 `std_mean/entropy`（动作标准差均值/熵）塌缩，策略退化为几乎确定性未到达 | `legged_gym_go2/logs/ecfppo_go2/20260611-080534/training.log`、`legged_gym_go2/legged_gym/envs/go2/go2_config.py`、`rsl_rl/rsl_rl/algorithms/ecfppo.py` | 提高 `log_std_min=-1.4`（动作标准差下界）并新增 `entropy_coef_floor=1e-4`（熵系数下限） | 从头跑 500 iter，重点比较 `std_mean`（动作标准差均值）、`entropy`（熵）、`act_mean_clip_ratio/raw_mean_clip_ratio`（动作均值贴边比例/原始均值越界比例）、`no_reach`（未到达比例）和峰值/持续 `success`（成功率） |
+| D015 | resolved | P0 | 后期 `std_mean/entropy`（动作标准差均值/熵）塌缩，策略退化为几乎确定性未到达 | `legged_gym_go2/logs/ecfppo_go2/20260611-080534/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260611-121915/training.log`、`legged_gym_go2/legged_gym/envs/go2/go2_config.py`、`rsl_rl/rsl_rl/algorithms/ecfppo.py` | 已提高 `log_std_min=-1.4`（动作标准差下界）并新增 `entropy_coef_floor=1e-4`（熵系数下限） | D015 维持了探索下限并小幅改善最终 `success/no_reach`（成功率/未到达比例），但动作均值和 raw logits（原始输出）仍饱和；转入 D016 测试真正有界策略 |
+| D016 | open | P0 | Gaussian + tanh(mean) 仍存在动作边界错配和饱和，后期未到达仍高 | `legged_gym_go2/logs/ecfppo_go2/20260611-121915/training.log`、`rsl_rl/rsl_rl/modules/actor_critic.py`、`rsl_rl/rsl_rl/algorithms/ecfppo.py`、`legged_gym_go2/legged_gym/scripts/train_ecfppo.py`、`legged_gym_go2/legged_gym/envs/go2/go2_config.py` | 新增可选 `action_distribution='beta'`（Beta 动作分布），Go2 默认启用 Beta policy（贝塔策略），并记录 `beta_alpha_mean/beta_beta_mean/beta_concentration_mean`（Beta 分布参数/浓度） | 单元测试已通过；下一步跑 50 iter 冒烟训练，再从头跑 500 iter，对比 `act_clip_ratio/action_mean_clip_ratio/no_reach/reach_clip_ratio/success`（动作贴边/动作均值贴边/未到达/reach 裁剪/成功率） |
 
 ## 训练记录索引
 
@@ -69,6 +70,7 @@
 | 20260610-174615 | 2026-06-10 | D012 `actor_raw_mean_bound_coef=1e-3` 后从头训练 300 iter | 1-300 | 0.356 | 0.030 | 峰值 iter 187：`success=0.356`（成功率）、`reach_rate=0.700`（到达率）；但后期 `raw_mean_clip_ratio`（原始均值越界比例）仍约 0.65-0.94，iter 300 `no_reach=0.969`（未到达比例） | D012 方向有效但系数偏弱；触发 D013，将 `actor_raw_mean_bound_coef` 提高到 `1e-2` |
 | 20260610-212458 | 2026-06-11 | D013 `actor_raw_mean_bound_coef=1e-2` 后从头训练 500 iter | 1-500 | 0.281 | 0.071 | 峰值 iter 206：`success=0.281`（成功率）、`reach_rate=0.646`（到达率）、`unsafe_before_reach=0.365`（到达前不安全比例）；iter 500 `act_mean_clip_ratio=0.234`（动作均值贴边比例）但 `reach_clip_ratio=0.636`（reach critic 裁剪比例）、`no_reach=0.912`（未到达比例） | D013 缓解动作均值贴边但未解决后期未到达；触发 D014，给 reach critic 输出加边界正则 |
 | 20260611-080534 | 2026-06-11 | D014 `reach_value_bound_coef=1e-4` 后从头训练 500 iter | 1-500 | 0.314 | 0.028 | 峰值 iter 238：`success=0.314`、`reach_rate=0.695`、`unsafe_before_reach=0.381`；iter 500 `success=0.028`、`no_reach=0.972`、`std_mean=0.1499`（动作标准差均值）、`entropy=-1.4568`（熵）、`reach_clip_ratio=0.6539`（reach critic 裁剪比例） | D014 可短暂提高峰值但持续性更差；reach critic 边界正则不足以解决 actor 饱和和探索塌缩，触发 D015 |
+| 20260611-121915 | 2026-06-11 | D015 `log_std_min=-1.4`、`entropy_coef_floor=1e-4` 后从头训练 500 iter | 1-500 | 0.314 | 0.052 | 峰值 iter 238：`success=0.314`、`reach_rate=0.695`；iter 500 `std_mean=0.2466`（动作标准差均值）、`entropy=0.0568`（熵）、`success=0.052`、`no_reach=0.938`、`act_mean_clip_ratio=0.4710`（动作均值贴边比例）、`raw_mean_clip_ratio=0.9357`（原始均值越界比例）、`reach_clip_ratio=0.9628`（reach critic 裁剪比例） | D015 维持探索下限但没有解决动作饱和和未到达；触发 D016 切到 Beta 有界策略 |
 
 ## 分析记录
 
@@ -765,17 +767,34 @@
 ### D015: 后期探索塌缩导致策略退化为未到达
 
 - 日期：2026-06-11
-- 状态：open
+- 状态：resolved
 - 严重性：P0
 - 触发原因：D014 后训练 `20260611-080534` 显示 reach critic（到达价值网络）边界正则只能短暂改善峰值，后期仍退化为 `no_reach`（未到达）主导，并伴随 `std_mean/entropy`（动作标准差均值/熵）持续下降。
-- 相关日志：`legged_gym_go2/logs/ecfppo_go2/20260611-080534/training.log`
-- 现象：本轮完整 500 iter。峰值 iter 238 为 `success=0.314`（成功率）、`reach_rate=0.695`（到达率）、`unsafe_before_reach=0.381`（到达前不安全比例）；最终 iter 500 为 `success=0.028`、`reach_rate=0.028`（到达率）、`no_reach=0.972`。`std_mean`（动作标准差均值）从 0.5 降到 0.1499，`entropy`（熵）降到 -1.4568，说明后期探索接近关闭。
+- 相关日志：`legged_gym_go2/logs/ecfppo_go2/20260611-080534/training.log`、`legged_gym_go2/logs/ecfppo_go2/20260611-121915/training.log`
+- 现象：D014 本轮完整 500 iter。峰值 iter 238 为 `success=0.314`（成功率）、`reach_rate=0.695`（到达率）、`unsafe_before_reach=0.381`（到达前不安全比例）；最终 iter 500 为 `success=0.028`、`reach_rate=0.028`（到达率）、`no_reach=0.972`。`std_mean`（动作标准差均值）从 0.5 降到 0.1499，`entropy`（熵）降到 -1.4568，说明后期探索接近关闭。
 - 初步假设：当前 `log_std_min=-2.0`（动作标准差下界，约 `std_min=0.135`）和退火到 0 的 `ent_coef`（当前熵系数）允许策略后期过早变成几乎确定性；在目标驱动已经不稳定时，确定性策略容易固定到“不去目标”的局部模式。
 - 代码链路：`EC_EFPPO.compute_entropy_coef()` 负责 entropy coefficient（熵系数）退火；`EC_EFPPO_ActorCritic.std` 通过 `exp(clamp(log_std))` 产生动作标准差；`GO2EC_EFPPOCfgPPO.algorithm` 提供 `log_std_min/log_std_max/entropy_coef/anneal_entropy`（标准差范围/熵系数/熵退火）配置。
 - 结论：不直接切换到完整 squashed Gaussian（压缩高斯）或 Beta distribution（Beta 有界分布），因为这会同时改变 `sample/log_prob/entropy`（采样/动作对数概率/熵）语义。D015 先做最小探索下限实验，验证后期 `no_reach` 是否可缓解。
 - 改动：`compute_entropy_coef()` 新增 `entropy_coef_floor`（熵系数下限）参数，默认 0 保持旧行为；训练脚本从配置读取该参数；Go2 默认 `log_std_min` 从 `-2.0` 提高到 `-1.4`，对应 `std_min≈0.247`，并新增 `entropy_coef_floor=1e-4`。
-- 验证：先运行 `tests/test_ecfppo.py`、`tests/test_train_ecfppo.py` 和 actor-critic 相关测试；通过后从头跑 500 iter，重点比较 `std_mean`（动作标准差均值）、`entropy`（熵）、`act_mean_clip_ratio/raw_mean_clip_ratio`（动作均值贴边比例/原始均值越界比例）、`no_reach`（未到达比例）和峰值/持续 `success`（成功率）。
-- 验证后下一步计划：如果 D015 降低后期 `no_reach` 且不显著推高动作贴边，再考虑微调 entropy floor（熵系数下限）或安全约束；如果仍塌缩，再进入 D016，评估 Beta distribution（Beta 有界分布）或完整 squashed Gaussian（压缩高斯）等真正有界策略。
+- 验证：`20260611-121915` 完整 500 iter。最终 `std_mean=0.2466`（动作标准差均值）和 `entropy=0.0568`（熵）证明探索下限生效，最终 `success=0.052`（成功率）和 `no_reach=0.938`（未到达比例）优于 D014 最终 `0.028/0.972`；但峰值没有超过 D014，401-500 窗口 `success≈0.033`、`no_reach≈0.964`，且 iter 500 `act_mean_clip_ratio=0.4710`（动作均值贴边比例）、`raw_mean_clip_ratio=0.9357`（原始均值越界比例）、`reach_clip_ratio=0.9628`（reach critic 裁剪比例）。
+- 验证后下一步计划：D015 证明“保底探索”只能缓解，不能解决 Gaussian（高斯分布）策略和 `[-1, 1]` 动作边界的结构性错配；进入 D016，优先实现 Beta distribution（Beta 有界分布），而不是继续提高探索或继续加 raw mean 正则。
+
+### D016: Beta 有界策略替代 Gaussian + tanh(mean)
+
+- 日期：2026-06-11
+- 状态：open
+- 严重性：P0
+- 触发原因：D015 后训练 `20260611-121915` 虽然维持了 `std_mean/entropy`（动作标准差均值/熵），但最终仍由 `no_reach`（未到达）主导，且 `action_mean/raw_action_mean`（动作均值/原始动作均值）仍大面积饱和。
+- 相关日志：`legged_gym_go2/logs/ecfppo_go2/20260611-121915/training.log`
+- 现象：iter 500 `success=0.052`（成功率）、`reach_rate=0.062`（到达率）、`no_reach=0.938`（未到达比例）；debug iter 500 `act_clip_ratio=0.4793`（动作贴边比例）、`act_mean_clip_ratio=0.4710`（动作均值贴边比例）、`raw_mean_clip_ratio=0.9357`（原始均值越界比例）、`reach_clip_ratio=0.9628`（reach critic 裁剪比例）。
+- 外部参考：Beta-PPO 论文指出 Gaussian（高斯分布）无限支撑经过环境裁剪会引入边界偏差；新版 rsl_rl 已提供 `BetaDistribution`（Beta 动作分布）并把样本映射到 `[-1, 1]`；Stable-Baselines3 的 squashed Gaussian（压缩高斯）实现需要 tanh Jacobian（雅可比）修正，说明只做 `tanh(mean)` 不是完整有界策略。
+- 初步假设：当前 Gaussian + `tanh(mean)` 只限制均值，不限制采样分布支撑；PPO 的 `log_prob/ratio/entropy`（动作对数概率/重要性比例/熵）仍在未裁剪分布上计算，环境却执行裁剪动作。Beta policy（Beta 策略）直接在 `[0, 1]` 上采样并线性映射到 `[-1, 1]`，可以让训练分布和执行动作边界一致。
+- 代码链路：`EC_EFPPO_ActorCritic.update_distribution()` 构造策略分布；`act()` 采样动作并记录 `log_prob`；`get_actions_log_prob()` 在 PPO update 中重算旧动作概率；`train_ecfppo.py` 写 rollout 和 debug；`EC_EFPPO_Buffer.compute_advantages()` 统计动作贴边和 Beta 参数。
+- 结论：D016 优先实现可选 `action_distribution='beta'`，保留 Gaussian 分支兼容旧实验。Go2 默认切到 Beta，并关闭 `bounded_actor_mean`，因为 Beta 本身输出有界动作。
+- 改动：`EC_EFPPO_ActorCritic` 新增 Beta 分支，actor 输出维度从 `num_actions` 变为 `2*num_actions`，经 `softplus()+1` 得到 `alpha/beta`（Beta 分布参数），采样后从 `[0, 1]` 映射到 `[-1, 1]`，`log_prob` 加入线性缩放的 `log(2)` 修正；Beta 分支的 policy optimizer（策略优化器）不再管理无效 `log_std`（高斯标准差参数）。`EC_EFPPO_Buffer` 记录 `beta_alpha/beta_beta`（Beta 参数）并输出 `beta_concentration_mean`（Beta 浓度均值）。`train_ecfppo.py` 从配置传入 `action_distribution`（动作分布）并在 Beta 分支把 `std_mean/std_min/std_max`（标准差统计）输出为 `nan`，避免误读旧 Gaussian std。Go2 默认 `action_distribution='beta'`、`bounded_actor_mean=False`。
+- 验证：已补充 Beta actor-critic 行为测试、Beta optimizer 参数测试和 Go2 配置测试；已通过 `py_compile`、`tests/test_ecfppo_actor_critic.py`、`tests/test_train_ecfppo.py`、`tests/test_ecfppo.py`。下一步跑 50 iter 冒烟训练确认 `beta_alpha_mean/beta_beta_mean/beta_concentration_mean`（Beta 参数/浓度）正常写入日志。
+- 后续动作：冒烟通过后从头跑 500 iter，对比 D015 的 `act_clip_ratio=0.4793`（动作贴边比例）、`act_mean_clip_ratio=0.4710`（动作均值贴边比例）、`raw_mean_clip_ratio=0.9357`（原始均值越界比例）、`no_reach=0.938`（未到达比例）、`reach_clip_ratio=0.9628`（reach critic 裁剪比例）和 `success=0.052`（成功率）。
+- 验证后下一步计划：如果 Beta 显著降低动作贴边但 `no_reach` 仍高，下一步转向目标观测/advantage（优势）区分和安全约束；如果 Beta 导致 entropy（熵）或 concentration（浓度）快速退化，再给 `alpha/beta` 增加浓度约束或改用 squashed Gaussian。
 
 ## 决策记录
 
@@ -815,6 +834,7 @@
 - 2026-06-10：`20260610-174615` 证明 D012 能把峰值 `success/reach_rate`（成功率/到达率）恢复到 0.356/0.700，但 `raw_mean_clip_ratio`（原始均值越界比例）仍高且后期 `no_reach`（未到达）回到 0.969；D013 将 `actor_raw_mean_bound_coef`（actor 原始均值越界惩罚系数）从 `1e-3` 提高到 `1e-2`。
 - 2026-06-11：`20260610-212458` 证明 D013 缓解了 `act_mean_clip_ratio`（动作均值贴边比例），但后期 `reach_clip_ratio/reach_loss`（reach critic 裁剪比例/到达价值损失）仍高且 `no_reach`（未到达）回到 0.912；D014 新增 `reach_value_bound_loss`（到达价值边界损失），默认 `reach_value_bound=5000.0`、`reach_value_bound_coef=1e-4`。
 - 2026-06-11：`20260611-080534` 证明 D014 可短暂提高峰值但不能解决后期坍塌，最终 `std_mean/entropy`（动作标准差均值/熵）继续塌缩且 `no_reach=0.972`；D015 将 `log_std_min`（动作标准差下界）从 `-2.0` 提高到 `-1.4`，并新增 `entropy_coef_floor=1e-4`（熵系数下限）。
+- 2026-06-11：`20260611-121915` 证明 D015 维持了探索下限，但最终 `no_reach=0.938`（未到达比例）、`act_mean_clip_ratio=0.4710`（动作均值贴边比例）、`raw_mean_clip_ratio=0.9357`（原始均值越界比例）仍说明 Gaussian + tanh(mean) 没有解决边界错配；D016 新增 Beta 有界动作分布并将 Go2 默认切到 `action_distribution='beta'`（Beta 动作分布）。
 
 ## 记录模板
 
